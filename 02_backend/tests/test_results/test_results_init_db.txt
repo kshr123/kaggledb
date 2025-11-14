@@ -1,0 +1,17 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.9.6, pytest-8.4.2, pluggy-1.6.0 -- /Users/kotaro/Desktop/dev/kaggledb/backend/.venv/bin/python3
+cachedir: .pytest_cache
+rootdir: /Users/kotaro/Desktop/dev/kaggledb/backend
+plugins: cov-7.0.0
+collecting ... collected 8 items
+
+tests/test_init_db.py::TestDatabaseInitialization::test_create_competitions_table PASSED [ 12%]
+tests/test_init_db.py::TestDatabaseInitialization::test_create_discussions_table PASSED [ 25%]
+tests/test_init_db.py::TestDatabaseInitialization::test_create_solutions_table PASSED [ 37%]
+tests/test_init_db.py::TestDatabaseInitialization::test_create_tags_table PASSED [ 50%]
+tests/test_init_db.py::TestDatabaseInitialization::test_insert_initial_tags PASSED [ 62%]
+tests/test_init_db.py::TestDatabaseInitialization::test_create_indexes PASSED [ 75%]
+tests/test_init_db.py::TestDatabaseInitialization::test_idempotent_initialization PASSED [ 87%]
+tests/test_init_db.py::TestDatabaseInitialization::test_foreign_key_constraints PASSED [100%]
+
+============================== 8 passed in 0.07s ===============================
