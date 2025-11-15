@@ -2,11 +2,13 @@
 """
 コンペティション情報充実化スクリプト
 
-既存のコンペティションデータに対して、LLMを使用して以下を生成・更新します：
-- 日本語要約 (summary)
-- データタイプ (data_types)
-- タグ (tags)
-- ドメイン (domain)
+既存のコンペティションデータに対して、以下の処理を行います：
+1. Webスクレイピングで詳細情報を取得（キャッシュ活用）
+2. LLMを使用して以下を生成・更新：
+   - 日本語要約 (summary)
+   - データタイプ (data_types)
+   - タグ (tags)
+   - ドメイン (domain)
 """
 
 import sys
@@ -22,6 +24,7 @@ from typing import List, Dict
 
 from app.config import DATABASE_PATH
 from app.services.llm_service import get_llm_service
+from app.services.scraper_service import get_scraper_service
 
 
 def get_available_tags() -> Dict[str, List[str]]:
@@ -123,6 +126,8 @@ def update_competition(competition: Dict) -> bool:
         tags_json = json.dumps(competition.get("tags", []), ensure_ascii=False)
         data_types_json = json.dumps(competition.get("data_types", []), ensure_ascii=False)
 
+        now = datetime.now().isoformat()
+
         cursor.execute("""
             UPDATE competitions
             SET
@@ -130,6 +135,7 @@ def update_competition(competition: Dict) -> bool:
                 tags = ?,
                 data_types = ?,
                 domain = ?,
+                last_scraped_at = ?,
                 updated_at = ?
             WHERE id = ?
         """, (
@@ -137,7 +143,8 @@ def update_competition(competition: Dict) -> bool:
             tags_json,
             data_types_json,
             competition.get("domain", ""),
-            datetime.now().isoformat(),
+            competition.get("last_scraped_at"),  # スクレイピング日時
+            now,
             competition["id"]
         ))
 
@@ -183,6 +190,14 @@ def main():
         print("💡 OPENAI_API_KEY が .env に設定されているか確認してください")
         return
 
+    # スクレイピングサービス初期化
+    try:
+        scraper_service = get_scraper_service()
+        print("✅ スクレイピングサービス初期化成功")
+    except Exception as e:
+        print(f"❌ スクレイピングサービス初期化失敗: {e}")
+        return
+
     # タグマスタ取得
     available_tags = get_available_tags()
     print(f"✅ タグマスタ取得: {sum(len(tags) for tags in available_tags.values())}件")
@@ -205,7 +220,19 @@ def main():
         print(f"  ID: {comp['id']}")
 
         try:
-            # LLMで充実化
+            # 1. Webスクレイピングで詳細情報を取得
+            scraped_data = scraper_service.get_competition_details(comp['id'])
+
+            if scraped_data and scraped_data.get('full_text'):
+                print(f"  🌐 スクレイピング: {len(scraped_data['full_text'])}文字取得")
+                # スクレイピングした詳細テキストを使用
+                comp['description'] = scraped_data['full_text']
+                comp['last_scraped_at'] = scraped_data['scraped_at']
+            else:
+                print(f"  ⚠️  スクレイピング失敗 - API の description を使用")
+                comp['last_scraped_at'] = None
+
+            # 2. LLMで充実化
             enriched = llm_service.enrich_competition(comp, available_tags)
 
             # 結果を表示
@@ -219,7 +246,7 @@ def main():
             if enriched.get("domain"):
                 print(f"  ✅ ドメイン: {enriched['domain']}")
 
-            # データベース更新
+            # 3. データベース更新
             if not args.dry_run:
                 if update_competition(enriched):
                     print(f"  💾 データベース更新成功")
@@ -233,6 +260,8 @@ def main():
 
         except Exception as e:
             print(f"  ❌ エラー: {e}")
+            import traceback
+            traceback.print_exc()
             error_count += 1
             continue
 
