@@ -58,11 +58,19 @@ class TestConfig:
     def test_config_values_not_hardcoded_secrets(self):
         """設定に秘密情報がハードコードされていないか"""
         from app.config import OPENAI_API_KEY, KAGGLE_KEY
+        import app.config as config_module
+        import inspect
 
-        # 実際のAPIキーがハードコードされていないことを確認
-        # None または環境変数から読み込まれた値であるべき
+        # config.pyのソースコードを取得
+        source = inspect.getsource(config_module)
+
+        # ソースコードに直接APIキーが書かれていないことを確認
+        assert 'sk-proj-' not in source, "OpenAI APIキーがハードコードされている"
+        assert 'sk-' not in source or 'os.getenv' in source, "APIキーがハードコードされている可能性"
+
+        # 環境変数から読み込まれていることを確認
         if OPENAI_API_KEY:
-            assert not OPENAI_API_KEY.startswith('sk-proj-')  # ハードコード禁止
+            assert OPENAI_API_KEY == os.getenv('OPENAI_API_KEY')
 
         if KAGGLE_KEY:
-            assert len(KAGGLE_KEY) == 0 or KAGGLE_KEY == os.getenv('KAGGLE_KEY')
+            assert KAGGLE_KEY == os.getenv('KAGGLE_KEY')

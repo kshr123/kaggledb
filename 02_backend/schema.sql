@@ -66,8 +66,9 @@ CREATE TABLE IF NOT EXISTS solutions (
 CREATE TABLE IF NOT EXISTS tags (
     id                INTEGER PRIMARY KEY AUTOINCREMENT,
     name              TEXT UNIQUE NOT NULL,       -- タグ名
-    category          TEXT NOT NULL,              -- カテゴリ
-    display_order     INTEGER DEFAULT 0           -- 表示順
+    category          TEXT NOT NULL,              -- カテゴリID
+    display_order     INTEGER DEFAULT 0,          -- 表示順
+    description       TEXT                        -- タグの説明（オプション）
 );
 
 -- ============================================
@@ -94,32 +95,83 @@ CREATE INDEX IF NOT EXISTS idx_tags_category ON tags(category);
 -- ============================================
 -- 初期データ（タグマスタ）
 -- ============================================
+-- カテゴリID一覧:
+-- - data_type: データ種別
+-- - task_type: タスク種別
+-- - model_type: モデル種別
+-- - solution_method: 解法種別
+-- - competition_feature: コンペ特徴
+-- - domain: ドメイン
 
 INSERT OR IGNORE INTO tags (name, category, display_order) VALUES
--- 課題系
-('不均衡データ', '課題系', 1),
-('異常検知', '課題系', 2),
-('欠損値', '課題系', 3),
-('時系列', '課題系', 4),
-('マルチモーダル', '課題系', 5),
+-- データ種別 (data_type)
+('テーブルデータ', 'data_type', 1),
+('画像', 'data_type', 2),
+('テキスト', 'data_type', 3),
+('時系列', 'data_type', 4),
+('音声', 'data_type', 5),
+('動画', 'data_type', 6),
+('マルチモーダル', 'data_type', 7),
 
--- データ系
-('テーブルデータ', 'データ系', 11),
-('画像', 'データ系', 12),
-('テキスト', 'データ系', 13),
-('音声', 'データ系', 14),
-('動画', 'データ系', 15),
+-- タスク種別 (task_type)
+('分類（二値）', 'task_type', 11),
+('分類（多クラス）', 'task_type', 12),
+('回帰', 'task_type', 13),
+('ランキング', 'task_type', 14),
+('物体検出', 'task_type', 15),
+('セグメンテーション', 'task_type', 16),
+('生成', 'task_type', 17),
+('クラスタリング', 'task_type', 18),
 
--- 手法系
-('アンサンブル', '手法系', 21),
-('Transformer', '手法系', 22),
-('GBM', '手法系', 23),
-('深層学習', '手法系', 24),
-('擬似ラベリング', '手法系', 25),
+-- モデル種別 (model_type)
+('LightGBM', 'model_type', 21),
+('XGBoost', 'model_type', 22),
+('CatBoost', 'model_type', 23),
+('Random Forest', 'model_type', 24),
+('Neural Network', 'model_type', 25),
+('CNN', 'model_type', 26),
+('RNN', 'model_type', 27),
+('LSTM', 'model_type', 28),
+('Transformer', 'model_type', 29),
+('BERT', 'model_type', 30),
+('GPT', 'model_type', 31),
+('U-Net', 'model_type', 32),
+('YOLO', 'model_type', 33),
+('Linear Model', 'model_type', 34),
+('SVM', 'model_type', 35),
 
--- ドメイン系
-('医療', 'ドメイン系', 31),
-('金融', 'ドメイン系', 32),
-('Eコマース', 'ドメイン系', 33),
-('自然言語処理', 'ドメイン系', 34),
-('コンピュータビジョン', 'ドメイン系', 35);
+-- 解法種別 (solution_method)
+('Stacking', 'solution_method', 41),
+('Blending', 'solution_method', 42),
+('Pseudo-Labeling', 'solution_method', 43),
+('Adversarial Validation', 'solution_method', 44),
+('Feature Selection', 'solution_method', 45),
+('Target Encoding', 'solution_method', 46),
+('Embedding', 'solution_method', 47),
+('Augmentation', 'solution_method', 48),
+('TTA (Test Time Augmentation)', 'solution_method', 49),
+('Ensemble', 'solution_method', 50),
+('Cross Validation', 'solution_method', 51),
+('Fine-tuning', 'solution_method', 52),
+
+-- コンペ特徴 (competition_feature)
+('不均衡データ', 'competition_feature', 61),
+('欠損値多い', 'competition_feature', 62),
+('外れ値対策必要', 'competition_feature', 63),
+('大規模データ', 'competition_feature', 64),
+('小規模データ', 'competition_feature', 65),
+('リーク対策必要', 'competition_feature', 66),
+('時系列考慮', 'competition_feature', 67),
+('ドメイン知識重要', 'competition_feature', 68),
+('データ品質課題', 'competition_feature', 69),
+
+-- ドメイン (domain)
+('医療', 'domain', 71),
+('金融', 'domain', 72),
+('Eコマース', 'domain', 73),
+('自然言語処理', 'domain', 74),
+('コンピュータビジョン', 'domain', 75),
+('音声認識', 'domain', 76),
+('推薦システム', 'domain', 77),
+('時系列予測', 'domain', 78),
+('その他', 'domain', 79);

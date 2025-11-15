@@ -114,9 +114,14 @@ RESTART_*.md
 htmlcov/
 .tox/
 
-# テスト結果ファイルは保存する（除外しない）
-# test_results_red.txt
-# test_results_green.txt
+# テスト結果ファイル（再生成可能なので Git 管理しない）
+# ただし README.md は Git 管理する（ドキュメントとして価値がある）
+**/test_results/*.txt
+**/test_results/*.json
+**/test_results/*.xml
+**/quality_checks/*.txt
+**/quality_checks/*.json
+**/quality_checks/*.xml
 
 # OS
 Thumbs.db

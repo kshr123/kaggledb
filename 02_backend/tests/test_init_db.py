@@ -104,6 +104,12 @@ class TestDatabaseInitialization:
         """)
         assert cursor.fetchone() is not None
 
+        # カラムの確認（descriptionカラムが追加されている）
+        cursor.execute("PRAGMA table_info(tags)")
+        columns = {row[1] for row in cursor.fetchall()}
+        expected_columns = {'id', 'name', 'category', 'display_order', 'description'}
+        assert expected_columns.issubset(columns)
+
         conn.close()
 
     def test_insert_initial_tags(self, temp_db):
@@ -115,22 +121,42 @@ class TestDatabaseInitialization:
         conn = sqlite3.connect(temp_db)
         cursor = conn.cursor()
 
-        # タグ数の確認
+        # タグ数の確認（6カテゴリ、合計60タグ）
         cursor.execute("SELECT COUNT(*) FROM tags")
         count = cursor.fetchone()[0]
-        assert count == 20  # 課題系5 + データ系5 + 手法系5 + ドメイン系5
+        assert count == 60  # data_type:7 + task_type:8 + model_type:15 + solution_method:12 + competition_feature:9 + domain:9
+
+        # 各カテゴリのタグ数確認
+        cursor.execute("SELECT category, COUNT(*) FROM tags GROUP BY category ORDER BY category")
+        category_counts = dict(cursor.fetchall())
+        assert category_counts['data_type'] == 7
+        assert category_counts['task_type'] == 8
+        assert category_counts['model_type'] == 15
+        assert category_counts['solution_method'] == 12
+        assert category_counts['competition_feature'] == 9
+        assert category_counts['domain'] == 9
 
         # 特定のタグが存在することを確認
-        cursor.execute("SELECT name FROM tags WHERE name='不均衡データ'")
-        assert cursor.fetchone() is not None
-
         cursor.execute("SELECT name FROM tags WHERE name='テーブルデータ'")
         assert cursor.fetchone() is not None
 
-        # カテゴリの確認
+        cursor.execute("SELECT name FROM tags WHERE name='不均衡データ'")
+        assert cursor.fetchone() is not None
+
+        cursor.execute("SELECT name FROM tags WHERE name='LightGBM'")
+        assert cursor.fetchone() is not None
+
+        # カテゴリの確認（6つの新しいカテゴリ）
         cursor.execute("SELECT DISTINCT category FROM tags ORDER BY category")
         categories = [row[0] for row in cursor.fetchall()]
-        expected_categories = ['ドメイン系', 'データ系', '手法系', '課題系']
+        expected_categories = [
+            'competition_feature',
+            'data_type',
+            'domain',
+            'model_type',
+            'solution_method',
+            'task_type'
+        ]
         assert sorted(categories) == sorted(expected_categories)
 
         conn.close()
@@ -190,7 +216,7 @@ class TestDatabaseInitialization:
         conn.close()
 
         # タグ数が変わらないことを確認（重複挿入されない）
-        assert count_first == count_second == 20
+        assert count_first == count_second == 60
 
     def test_foreign_key_constraints(self, temp_db):
         """外部キー制約が設定されているか"""

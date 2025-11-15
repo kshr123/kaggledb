@@ -63,39 +63,141 @@ updated_at        TIMESTAMP              # 更新日時
 ```
 id                INTEGER PRIMARY KEY AUTOINCREMENT
 name              TEXT UNIQUE NOT NULL   # タグ名
-category          TEXT NOT NULL          # カテゴリ
+category          TEXT NOT NULL          # カテゴリID
 display_order     INTEGER DEFAULT 0      # 表示順
+description       TEXT                   # タグの説明（オプション）
 ```
 
-## 3.2 タグ一覧（初期データ）
+**カテゴリ値**:
+- `data_type` - データ種別
+- `task_type` - タスク種別
+- `model_type` - モデル種別
+- `solution_method` - 解法種別
+- `competition_feature` - コンペ特徴
+- `domain` - ドメイン
 
-**課題系**
-- 不均衡データ
-- 異常検知
-- 欠損値
-- 時系列
-- マルチモーダル
+## 3.2 タグカテゴリと初期データ
 
-**データ系**
+### カテゴリ定義
+
+| カテゴリID | カテゴリ名 | 説明 | フィルタ表示順 |
+|-----------|----------|------|--------------|
+| data_type | データ種別 | データの形式 | 1 |
+| task_type | タスク種別 | 解くべき課題の種類 | 2 |
+| model_type | モデル種別 | 使用するモデル | 3 |
+| solution_method | 解法種別 | テクニック・手法 | 4 |
+| competition_feature | コンペ特徴 | データセットの特性 | 5 |
+| domain | ドメイン | 応用分野 | 6 |
+
+### 初期タグデータ
+
+**データ種別（data_type）**
 - テーブルデータ
 - 画像
 - テキスト
+- 時系列
 - 音声
 - 動画
+- マルチモーダル
 
-**手法系**
-- アンサンブル
+**タスク種別（task_type）**
+- 分類（二値）
+- 分類（多クラス）
+- 回帰
+- ランキング
+- 物体検出
+- セグメンテーション
+- 生成
+- クラスタリング
+
+**モデル種別（model_type）**
+- LightGBM
+- XGBoost
+- CatBoost
+- Random Forest
+- Neural Network
+- CNN
+- RNN
+- LSTM
 - Transformer
-- GBM
-- 深層学習
-- 擬似ラベリング
+- BERT
+- GPT
+- U-Net
+- YOLO
+- Linear Model
+- SVM
 
-**ドメイン系**
+**解法種別（solution_method）**
+- Stacking
+- Blending
+- Pseudo-Labeling
+- Adversarial Validation
+- Feature Selection
+- Target Encoding
+- Embedding
+- Augmentation
+- TTA (Test Time Augmentation)
+- Ensemble
+- Cross Validation
+- Fine-tuning
+
+**コンペ特徴（competition_feature）**
+- 不均衡データ
+- 欠損値多い
+- 外れ値対策必要
+- 大規模データ
+- 小規模データ
+- リーク対策必要
+- 時系列考慮
+- ドメイン知識重要
+- データ品質課題
+
+**ドメイン（domain）**
 - 医療
 - 金融
 - Eコマース
 - 自然言語処理
 - コンピュータビジョン
+- 音声認識
+- 推薦システム
+- 時系列予測
+- その他
+
+## 3.3 レコメンド機能のデータ設計
+
+### 3.3.1 competition_views テーブル（オプション・将来拡張用）
+```
+id                INTEGER PRIMARY KEY AUTOINCREMENT
+competition_id    TEXT NOT NULL          # 外部キー
+user_id           TEXT                   # ユーザーID（将来用）
+viewed_at         TIMESTAMP              # 閲覧日時
+```
+
+**現在はローカルストレージベースで実装**:
+- ブラウザのlocalStorageに閲覧履歴を保存
+- サーバー側ではタグベースの類似度計算のみ
+
+### 3.3.2 レコメンドロジック
+
+**1. タグ類似度スコア**:
+```
+similarity_score = (共通タグ数) / (全体タグ数)
+重み付け:
+  - data_type: 1.0
+  - task_type: 1.5 (重要)
+  - model_type: 1.2
+  - solution_method: 1.3
+  - competition_feature: 0.8
+  - domain: 1.0
+```
+
+**2. 新規コンペ判定**:
+- `created_at >= (現在時刻 - 30日)` のコンペ
+
+**3. トレンドスコア**:
+- 最近追加されたコンペに高スコア
+- `days_since_created = 現在時刻 - created_at`
+- `trend_score = 1.0 / (1 + days_since_created / 7)`
 
 ---
 
@@ -103,3 +205,4 @@ display_order     INTEGER DEFAULT 0      # 表示順
 - [機能要件](./02_requirements.md)
 - [技術スタック](./04_tech_stack.md)
 - [バックエンド仕様](./11_backend_spec.md)
+- [API設計](./07_api_design.md)

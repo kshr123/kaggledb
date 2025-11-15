@@ -23,12 +23,19 @@
 - `limit`: int (1ページあたりの件数、デフォルト: 20)
 - `search`: string (タイトル・タグ・要約で検索)
 - `status`: string ('active' | 'completed' | 'all')
-- `tags`: string[] (タグフィルタ、カンマ区切り)
+- `tags`: string[] (タグフィルタ、カンマ区切り) - **非推奨、下記カテゴリ別パラメータ使用推奨**
+- `data_types`: string[] (データ種別フィルタ、カンマ区切り)
+- `task_types`: string[] (タスク種別フィルタ、カンマ区切り)
+- `model_types`: string[] (モデル種別フィルタ、カンマ区切り)
+- `solution_methods`: string[] (解法種別フィルタ、カンマ区切り)
+- `competition_features`: string[] (コンペ特徴フィルタ、カンマ区切り)
+- `domains`: string[] (ドメインフィルタ、カンマ区切り)
 - `metric`: string[] (評価指標フィルタ)
 - `solution_status`: string ('未着手' | 'ディスカッションのみ' | '解法分析済み')
 - `year`: int (開催年)
-- `sort_by`: string ('end_date' | 'created_at' | 'title')
+- `sort_by`: string ('end_date' | 'created_at' | 'title' | 'similarity')
 - `sort_order`: string ('asc' | 'desc')
+- `view_mode`: string ('table' | 'card', デフォルト: 'table')
 
 **レスポンス例:**
 ```json
@@ -443,11 +450,101 @@
       "status": "active",
       "summary": "住宅価格を予測するコンペ。79個の特徴量を使った回帰タスク。初心者にも取り組みやすい課題。",
       "metric": "RMSE",
-      "tags": ["テーブルデータ", "回帰", "特徴量エンジニアリング"],
-      "data_types": ["tabular"]
+      "tags": {
+        "data_types": ["テーブルデータ"],
+        "task_types": ["回帰"],
+        "model_types": ["LightGBM", "XGBoost"],
+        "solution_methods": ["Feature Engineering", "Stacking"]
+      }
     }
   ],
   "total": 12
+}
+```
+
+---
+
+**GET /api/competitions/new**
+
+新規コンペ一覧取得（30日以内に追加されたコンペ）
+
+**クエリパラメータ:**
+- `page`: int (ページ番号、デフォルト: 1)
+- `limit`: int (1ページあたりの件数、デフォルト: 20)
+- `days`: int (何日以内か、デフォルト: 30、最大: 90)
+
+**レスポンス例:**
+```json
+{
+  "status": "success",
+  "data": {
+    "items": [
+      {
+        "id": "llm-prompt-recovery",
+        "title": "LLM Prompt Recovery",
+        "url": "https://www.kaggle.com/c/llm-prompt-recovery",
+        "created_at": "2025-11-13T10:00:00Z",
+        "days_since_added": 2,
+        "status": "active",
+        "end_date": "2025-12-15T23:59:59Z",
+        "days_remaining": 30,
+        "summary": "LLMのプロンプトを推測するコンペ...",
+        "metric": "F1 Score",
+        "tags": {
+          "data_types": ["テキスト"],
+          "task_types": ["分類"],
+          "model_types": ["Transformer", "BERT"]
+        }
+      }
+    ],
+    "total": 5,
+    "page": 1,
+    "limit": 20,
+    "total_pages": 1
+  }
+}
+```
+
+---
+
+**GET /api/recommendations**
+
+レコメンドコンペ一覧取得
+
+**クエリパラメータ:**
+- `competition_id`: string (基準となるコンペID、オプション)
+- `limit`: int (取得件数、デフォルト: 6、最大: 20)
+- `strategy`: string ('similar' | 'trend' | 'mixed', デフォルト: 'mixed')
+
+**レスポンス例:**
+```json
+{
+  "status": "success",
+  "data": {
+    "recommendations": [
+      {
+        "id": "house-prices",
+        "title": "House Prices - Advanced Regression Techniques",
+        "url": "https://www.kaggle.com/c/house-prices-advanced-regression-techniques",
+        "similarity_score": 0.85,
+        "reason": "同じタグ: テーブルデータ, 回帰, Feature Engineering",
+        "common_tags": ["テーブルデータ", "回帰", "Feature Engineering"],
+        "summary": "住宅価格予測...",
+        "metric": "RMSE",
+        "tags": {
+          "data_types": ["テーブルデータ"],
+          "task_types": ["回帰"],
+          "model_types": ["LightGBM", "XGBoost"],
+          "solution_methods": ["Feature Engineering", "Stacking"]
+        }
+      }
+    ],
+    "base_competition": {
+      "id": "titanic",
+      "title": "Titanic - Machine Learning from Disaster"
+    },
+    "total": 6
+  }
 }
 ```
 
@@ -455,23 +552,44 @@
 
 **GET /api/tags**
 
-タグ一覧取得
+タグ一覧取得（カテゴリ別）
 
 **クエリパラメータ:**
-- `category`: string (タグカテゴリでフィルタ)
+- `category`: string (タグカテゴリでフィルタ: 'data_type' | 'task_type' | 'model_type' | 'solution_method' | 'competition_feature' | 'domain')
+- `group_by_category`: boolean (カテゴリごとにグループ化、デフォルト: true)
 
-**レスポンス例:**
+**レスポンス例（group_by_category=true）:**
 ```json
 {
   "status": "success",
-  "data": [
-    {
-      "id": 1,
-      "name": "不均衡データ",
-      "category": "課題系",
-      "display_order": 0
-    }
-  ]
+  "data": {
+    "data_type": [
+      {"id": 1, "name": "テーブルデータ", "display_order": 0},
+      {"id": 2, "name": "画像", "display_order": 1},
+      {"id": 3, "name": "テキスト", "display_order": 2}
+    ],
+    "task_type": [
+      {"id": 10, "name": "分類（二値）", "display_order": 0},
+      {"id": 11, "name": "分類（多クラス）", "display_order": 1},
+      {"id": 12, "name": "回帰", "display_order": 2}
+    ],
+    "model_type": [
+      {"id": 20, "name": "LightGBM", "display_order": 0},
+      {"id": 21, "name": "XGBoost", "display_order": 1}
+    ],
+    "solution_method": [
+      {"id": 30, "name": "Stacking", "display_order": 0},
+      {"id": 31, "name": "Feature Engineering", "display_order": 1}
+    ],
+    "competition_feature": [
+      {"id": 40, "name": "不均衡データ", "display_order": 0},
+      {"id": 41, "name": "欠損値多い", "display_order": 1}
+    ],
+    "domain": [
+      {"id": 50, "name": "医療", "display_order": 0},
+      {"id": 51, "name": "金融", "display_order": 1}
+    ]
+  }
 }
 ```
 
