@@ -24,9 +24,10 @@ app.add_middleware(
 )
 
 # ルーター登録
-from app.routers import tags
+from app.routers import tags, competitions
 
 app.include_router(tags.router, prefix="/api", tags=["tags"])
+app.include_router(competitions.router, prefix="/api", tags=["competitions"])
 
 
 @app.get("/")
