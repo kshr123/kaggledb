@@ -29,7 +29,7 @@ class LLMService:
             raise ValueError("OpenAI APIキーが設定されていません")
 
         self.client = OpenAI(api_key=self.api_key)
-        self.model = "gpt-4o"  # GPT-4o（miniではない）
+        self.model = "gpt-4o-mini"  # GPT-4o mini（コスト削減版）
         self.max_retries = 3
         self.retry_delay = 2  # 秒
 
