@@ -31,7 +31,7 @@ tests/test_example.py::TestClass::test_method PASSED [ 50%]
 ```
 ============================= test session starts ==============================
 platform darwin -- Python 3.9.6, pytest-8.4.2, pluggy-1.6.0
-rootdir: /Users/kotaro/Desktop/dev/kaggledb/backend
+rootdir: /path/to/kaggledb/02_backend
 plugins: cov-7.0.0
 collecting ... collected 8 items
 

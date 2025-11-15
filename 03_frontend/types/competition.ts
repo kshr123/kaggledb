@@ -2,6 +2,17 @@
  * コンペティション関連の型定義
  */
 
+/**
+ * 構造化要約の型
+ */
+export interface StructuredSummary {
+  overview: string;
+  objective: string;
+  data: string;
+  business_value: string;
+  key_challenges: string[];
+}
+
 export interface Competition {
   id: string;
   title: string;
@@ -11,7 +22,7 @@ export interface Competition {
   status: 'active' | 'completed';
   metric: string;
   description?: string;
-  summary: string;
+  summary: string; // JSON文字列（StructuredSummaryをパースする）
   tags: string[];
   data_types: string[];
   domain: string;

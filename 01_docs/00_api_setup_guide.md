@@ -85,7 +85,7 @@ OPENAI_API_KEY=sk-proj-...
 
 ### backend/.env の最終確認
 
-`/Users/kotaro/Desktop/dev/kaggledb/backend/.env` を開いて確認：
+`02_backend/.env` を開いて確認：
 
 ```bash
 # Kaggle API 認証

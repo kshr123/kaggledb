@@ -315,6 +315,73 @@ lsof -ti:8000  # 空ならOK
 - **依存関係**: セキュリティ脆弱性のあるパッケージを避ける
 - **入力検証**: 外部からの入力は必ず検証・サニタイズ
 - **OWASP Top 10**: 主要な脆弱性（SQLインジェクション、XSS、CSRF等）を理解し対策
+- **個人情報の除外**: ドキュメントやコードサンプルに個人情報を含めない（詳細は下記）
+
+#### 個人情報保護ルール 🔒
+
+**ドキュメント・コードサンプルに絶対に含めてはいけない情報**:
+
+1. **個人のパス**
+   ```bash
+   # ❌ NG
+   /Users/username/Desktop/project
+   /home/yourname/dev/project
+   C:\Users\YourName\Documents\project
+
+   # ✅ OK（プロジェクトルートからの相対パス）
+   src/main.py
+   tests/test_main.py
+
+   # ✅ OK（汎用的な絶対パス）
+   /path/to/project
+   $PROJECT_ROOT/src
+   ```
+
+2. **ユーザー名**
+   ```bash
+   # ❌ NG
+   rootdir: /Users/kotaro/project
+
+   # ✅ OK
+   rootdir: /path/to/project
+   ```
+
+3. **実際のAPIキー・認証情報**
+   ```bash
+   # ❌ NG
+   API_KEY=sk-proj-abc123def456...
+
+   # ✅ OK
+   API_KEY=your_actual_api_key
+   API_KEY=sk-proj-xxxxx...
+   ```
+
+4. **メールアドレス**
+   ```bash
+   # ❌ NG
+   git config user.email "yourname@gmail.com"
+
+   # ✅ OK
+   git config user.email "your_email@example.com"
+   ```
+
+**コミット前チェック**:
+```bash
+# 個人情報が含まれていないか確認
+grep -r "/Users/" docs/ --include="*.md"
+grep -r "/home/" docs/ --include="*.md"
+grep -rE "[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}" docs/ --include="*.md"
+```
+
+**万が一コミットしてしまった場合**:
+```bash
+# 最新コミットを修正
+git reset --soft HEAD~1
+# 修正してから再コミット
+
+# 既にプッシュ済みの場合は revert
+git revert <commit_hash>
+```
 
 ### パフォーマンス
 
