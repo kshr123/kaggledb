@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS competitions (
     domain            TEXT,                       -- ドメイン
     discussion_count  INTEGER DEFAULT 0,          -- ディスカッション数
     solution_status   TEXT DEFAULT '未着手',       -- ステータス
+    last_scraped_at   TIMESTAMP,                  -- 最後にスクレイピングした日時
     created_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP,  -- 登録日時
     updated_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP   -- 更新日時
 );
