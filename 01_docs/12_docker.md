@@ -1,39 +1,96 @@
 # 12. Docker構成
 
-## 12.1 docker-compose.yml
+## 📝 重要: Phase別の導入計画
+
+- **Phase 1（現在）**: ローカル開発（Docker不要）
+- **Phase 2以降**: Docker導入（PostgreSQL + Redis）
+
+## 12.1 docker-compose.yml（Phase 2以降）
 
 ```yaml
 version: '3.8'
 
 services:
+  # PostgreSQL データベース
+  postgres:
+    image: postgres:16-alpine
+    container_name: kaggledb-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-kaggledb}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-password}
+      - POSTGRES_DB=${POSTGRES_DB:-kaggledb}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./02_backend/migrations:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kaggledb"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - kaggledb-network
+
+  # Redis キャッシュ
+  redis:
+    image: redis:7-alpine
+    container_name: kaggledb-redis
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      - kaggledb-network
+
+  # バックエンド API
   backend:
     build:
-      context: ./backend
+      context: ./02_backend
       dockerfile: Dockerfile
-    container_name: kaggle-kb-backend
+    container_name: kaggledb-backend
     ports:
       - "8000:8000"
     volumes:
-      - ./backend/app:/app/app
-      - ./backend/data:/app/data
+      - ./02_backend/app:/app/app
+      - ./02_backend/data:/app/data
     environment:
       - KAGGLE_USERNAME=${KAGGLE_USERNAME}
       - KAGGLE_KEY=${KAGGLE_KEY}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - DATABASE_PATH=/app/data/kaggle_competitions.db
-      - CORS_ORIGINS=http://localhost:3000
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-kaggledb}:${POSTGRES_PASSWORD:-password}@postgres:5432/${POSTGRES_DB:-kaggledb}
+      - REDIS_URL=redis://redis:6379/0
+      - REDIS_CACHE_TTL=${REDIS_CACHE_TTL:-3600}
+      - CORS_ORIGINS=http://localhost:3000,http://frontend:3000
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    networks:
+      - kaggledb-network
 
+  # フロントエンド
   frontend:
     build:
-      context: ./frontend
+      context: ./03_frontend
       dockerfile: Dockerfile
-    container_name: kaggle-kb-frontend
+    container_name: kaggledb-frontend
     ports:
       - "3000:3000"
     volumes:
-      - ./frontend/src:/app/src
-      - ./frontend/public:/app/public
+      - ./03_frontend/app:/app/app
+      - ./03_frontend/components:/app/components
+      - ./03_frontend/lib:/app/lib
+      - ./03_frontend/types:/app/types
+      - ./03_frontend/public:/app/public
       - /app/node_modules
       - /app/.next
     environment:
@@ -41,6 +98,18 @@ services:
     depends_on:
       - backend
     command: npm run dev
+    networks:
+      - kaggledb-network
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+
+networks:
+  kaggledb-network:
+    driver: bridge
 ```
 
 ## 12.2 backend/Dockerfile
