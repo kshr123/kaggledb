@@ -18,15 +18,9 @@ from app.services.scraper_service import ScraperService
 def main():
     parser = argparse.ArgumentParser(description="スクレイピング機能テスト")
     parser.add_argument(
-        "--headless",
-        action="store_true",
-        default=True,
-        help="ヘッドレスモードで実行（デフォルト）"
-    )
-    parser.add_argument(
         "--show-browser",
         action="store_true",
-        help="ブラウザを表示して実行（--headless の逆）"
+        help="ブラウザを表示して実行（デフォルト: ヘッドレスモード）"
     )
     parser.add_argument(
         "--limit",
@@ -43,8 +37,8 @@ def main():
 
     args = parser.parse_args()
 
-    # --show-browser が指定された場合は headless を False に
-    headless = not args.show_browser if args.show_browser else args.headless
+    # デフォルトは headless=True, --show-browser で False に
+    headless = not args.show_browser
 
     print("=" * 60)
     print("スクレイピング機能テスト")
