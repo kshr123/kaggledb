@@ -233,6 +233,62 @@ def get_competition_discussions(
     return discussions
 
 
+@router.get("/competitions/{competition_id}/solutions")
+def get_competition_solutions(
+    competition_id: str,
+    sort_by: str = Query("rank", description="ソート項目（rank, vote_count, created_at）"),
+    order: str = Query("asc", description="ソート順（asc/desc）"),
+    limit: Optional[int] = Query(None, ge=1, description="取得件数の上限")
+):
+    """
+    コンペティションの解法一覧を取得
+
+    Args:
+        competition_id: コンペID（slug）
+        sort_by: ソート項目（rank, vote_count, created_at）
+        order: ソート順（asc/desc）- rankの場合はascがデフォルト
+        limit: 取得件数の上限
+
+    Returns:
+        list: 解法一覧
+    """
+    conn = sqlite3.connect(DATABASE_PATH)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+
+    # ソート順の検証と設定
+    order_sql = "ASC" if order.lower() == "asc" else "DESC"
+
+    # rankがNULLのものは最後に表示
+    if sort_by == "rank":
+        query = f"""
+            SELECT * FROM solutions
+            WHERE competition_id = ?
+            ORDER BY
+                CASE WHEN rank IS NULL THEN 1 ELSE 0 END,
+                rank {order_sql},
+                vote_count DESC
+        """
+    else:
+        query = f"""
+            SELECT * FROM solutions
+            WHERE competition_id = ?
+            ORDER BY {sort_by} {order_sql}
+        """
+
+    if limit:
+        query += f" LIMIT {limit}"
+
+    cursor.execute(query, (competition_id,))
+    rows = cursor.fetchall()
+    conn.close()
+
+    # JSON形式に変換
+    solutions = [dict(row) for row in rows]
+
+    return solutions
+
+
 @router.patch("/competitions/{competition_id}/favorite")
 def toggle_favorite(competition_id: str):
     """

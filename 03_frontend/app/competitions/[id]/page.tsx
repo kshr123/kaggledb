@@ -2,9 +2,9 @@
 
 import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
-import { Competition, DatasetInfo, StructuredSummary, Discussion } from '@/types/competition'
+import { Competition, DatasetInfo, StructuredSummary, Discussion, Solution } from '@/types/competition'
 
-type Tab = 'overview' | 'data' | 'discussion'
+type Tab = 'overview' | 'data' | 'discussion' | 'solutions'
 
 export default function CompetitionDetailPage() {
   const params = useParams()
@@ -170,6 +170,12 @@ export default function CompetitionDetailPage() {
               label="ディスカッション"
               count={competition.discussion_count}
             />
+            <TabButton
+              active={activeTab === 'solutions'}
+              onClick={() => setActiveTab('solutions')}
+              icon="🏆"
+              label="解法"
+            />
           </div>
         </div>
 
@@ -178,6 +184,7 @@ export default function CompetitionDetailPage() {
           {activeTab === 'overview' && <OverviewTab competition={competition} summary={summary} />}
           {activeTab === 'data' && <DataTab datasetInfo={datasetInfo} competitionId={id} />}
           {activeTab === 'discussion' && <DiscussionTab competitionId={id} />}
+          {activeTab === 'solutions' && <SolutionsTab competitionId={id} />}
         </div>
       </div>
     </div>
@@ -725,6 +732,153 @@ function DiscussionTab({ competitionId }: { competitionId: string }) {
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+// 解法タブコンポーネント
+function SolutionsTab({ competitionId }: { competitionId: string }) {
+  const [solutions, setSolutions] = useState<Solution[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    async function fetchSolutions() {
+      try {
+        setLoading(true)
+        setError(null)
+        const res = await fetch(`http://localhost:8000/api/competitions/${competitionId}/solutions`)
+
+        if (!res.ok) {
+          throw new Error('解法の取得に失敗しました')
+        }
+
+        const data = await res.json()
+        setSolutions(data)
+      } catch (err) {
+        setError(err instanceof Error ? err.message : '不明なエラーが発生しました')
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    fetchSolutions()
+  }, [competitionId])
+
+  if (loading) {
+    return (
+      <div className="flex justify-center items-center py-12">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <div className="text-center py-12">
+        <p className="text-red-600">{error}</p>
+      </div>
+    )
+  }
+
+  if (solutions.length === 0) {
+    return (
+      <div className="text-center py-12">
+        <p className="text-slate-500">解法がまだ収集されていません</p>
+        <p className="text-sm text-slate-400 mt-2">
+          スクリプトを実行して解法を収集してください
+        </p>
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-4">
+      {/* 解法一覧 */}
+      {solutions.map((solution) => (
+        <div
+          key={solution.id}
+          className="border border-slate-200 rounded-lg p-4 hover:border-blue-300 hover:bg-blue-50/30 transition-all"
+        >
+          <div className="flex items-start gap-3">
+            {/* メダルアイコン */}
+            {solution.medal && (
+              <div className="flex-shrink-0 mt-1">
+                {solution.medal === 'gold' && <span className="text-2xl">🥇</span>}
+                {solution.medal === 'silver' && <span className="text-2xl">🥈</span>}
+                {solution.medal === 'bronze' && <span className="text-2xl">🥉</span>}
+              </div>
+            )}
+
+            <div className="flex-1 min-w-0">
+              {/* タイトルとURL */}
+              <div className="mb-2">
+                <a
+                  href={solution.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-blue-600 hover:text-blue-800 font-medium hover:underline text-lg"
+                >
+                  {solution.title}
+                </a>
+              </div>
+
+              {/* メタ情報 */}
+              <div className="flex items-center gap-4 text-sm text-slate-600">
+                {/* 投稿者 */}
+                {solution.author && (
+                  <div className="flex items-center gap-2">
+                    {solution.tier_color && (
+                      <svg width="16" height="16" viewBox="0 0 16 16" className="flex-shrink-0">
+                        <circle
+                          r="6"
+                          cx="8"
+                          cy="8"
+                          fill="none"
+                          strokeWidth="2"
+                          style={{ stroke: solution.tier_color }}
+                        />
+                      </svg>
+                    )}
+                    <span>{solution.author}</span>
+                  </div>
+                )}
+
+                {/* 順位 */}
+                {solution.rank && (
+                  <div className="flex items-center gap-1">
+                    <span className="text-slate-500">#{solution.rank}</span>
+                  </div>
+                )}
+
+                {/* 投票数 */}
+                <div className="flex items-center gap-1">
+                  <span>👍</span>
+                  <span>{solution.vote_count}</span>
+                </div>
+
+                {/* コメント数 */}
+                <div className="flex items-center gap-1">
+                  <span>💬</span>
+                  <span>{solution.comment_count}</span>
+                </div>
+
+                {/* タイプ */}
+                <div className="text-xs px-2 py-1 bg-slate-100 rounded">
+                  {solution.type === 'notebook' ? '📓 Notebook' : '💬 Discussion'}
+                </div>
+              </div>
+
+              {/* 要約 */}
+              {solution.summary && (
+                <div className="mt-3 p-3 bg-slate-50 rounded text-sm text-slate-700">
+                  <p className="whitespace-pre-wrap">{solution.summary}</p>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      ))}
     </div>
   )
 }

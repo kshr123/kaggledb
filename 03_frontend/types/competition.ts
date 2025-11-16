@@ -93,3 +93,26 @@ export interface Discussion {
   created_at: string;
   updated_at: string;
 }
+
+/**
+ * 解法情報の型
+ */
+export interface Solution {
+  id: number;
+  competition_id: string;
+  title: string;
+  author: string | null;
+  author_tier: string | null;
+  tier_color: string | null;
+  url: string;
+  type: 'notebook' | 'discussion';
+  medal: 'gold' | 'silver' | 'bronze' | null;
+  rank: number | null;
+  vote_count: number;
+  comment_count: number;
+  content: string | null;
+  summary: string | null;
+  techniques: string | null;
+  created_at: string;
+  updated_at: string;
+}
