@@ -1,12 +1,14 @@
 'use client'
 
 import { useState } from 'react'
+import { useRouter } from 'next/navigation'
 import useSWR from 'swr'
 import { fetcher, buildApiUrl } from '@/lib/api'
-import type { CompetitionListResponse, StructuredSummary } from '@/types/competition'
+import type { CompetitionListResponse, StructuredSummary, DatasetInfo } from '@/types/competition'
 import type { TagsByCategory } from '@/types/tag'
 
 export default function Home() {
+  const router = useRouter()
   const [search, setSearch] = useState('')
   const [status, setStatus] = useState<string>('all')
   const [page, setPage] = useState(1)
@@ -52,29 +54,29 @@ export default function Home() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-100">
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-gray-50 to-slate-100">
       {/* Header Stats Bar */}
-      <div className="bg-white border-b border-slate-200 shadow-sm">
-        <div className="max-w-[1800px] mx-auto px-8 py-4">
+      <div className="bg-white/80 backdrop-blur-sm border-b border-slate-200/60 shadow-sm sticky top-0 z-50">
+        <div className="max-w-[1800px] mx-auto px-8 py-5">
           <div className="flex items-center justify-between">
             <div>
-              <h1 className="text-2xl font-bold text-slate-900">Kaggle Competition Database</h1>
-              <p className="text-sm text-slate-600 mt-0.5">コンペティション分析ダッシュボード</p>
+              <h1 className="text-2xl font-semibold text-slate-900 tracking-tight">Kaggle Competition Database</h1>
+              <p className="text-sm text-slate-500 mt-1">コンペティション分析ダッシュボード</p>
             </div>
             {competitionsData && (
-              <div className="flex items-center gap-6">
-                <div className="text-center px-4 py-2 bg-slate-50 rounded-lg border border-slate-200">
-                  <div className="text-2xl font-bold text-slate-900">{competitionsData.total}</div>
-                  <div className="text-xs text-slate-600 font-medium">総コンペ数</div>
+              <div className="flex items-center gap-4">
+                <div className="text-center px-5 py-2.5 bg-slate-50/50 rounded-xl border border-slate-200/60">
+                  <div className="text-xl font-semibold text-slate-900">{competitionsData.total}</div>
+                  <div className="text-xs text-slate-500 font-medium mt-0.5">総コンペ数</div>
                 </div>
-                <div className="text-center px-4 py-2 bg-emerald-50 rounded-lg border border-emerald-200">
-                  <div className="text-2xl font-bold text-emerald-700">
+                <div className="text-center px-5 py-2.5 bg-gradient-to-br from-emerald-50 to-teal-50 rounded-xl border border-emerald-200/60">
+                  <div className="text-xl font-semibold text-emerald-700">
                     {competitionsData.items.filter(c => c.status === 'active').length}
                   </div>
-                  <div className="text-xs text-emerald-700 font-medium">開催中</div>
+                  <div className="text-xs text-emerald-600 font-medium mt-0.5">開催中</div>
                 </div>
-                <div className="text-center px-4 py-2 bg-slate-50 rounded-lg border border-slate-200">
-                  <div className="text-2xl font-bold text-slate-700">
+                <div className="text-center px-5 py-2.5 bg-slate-50/50 rounded-xl border border-slate-200/60">
+                  <div className="text-xl font-semibold text-slate-700">
                     {competitionsData.items.filter(c => c.status === 'completed').length}
                   </div>
                   <div className="text-xs text-slate-600 font-medium">終了済み</div>
@@ -196,45 +198,52 @@ export default function Home() {
           {isLoading && (
             <div className="px-6 py-12 text-center">
               <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-              <p className="mt-2 text-gray-600">読み込み中...</p>
+              <p className="mt-3 text-slate-600 font-medium">読み込み中...</p>
             </div>
           )}
 
           {/* Error State */}
           {error && (
             <div className="px-6 py-12 text-center">
-              <p className="text-red-600">データの取得に失敗しました</p>
+              <p className="text-red-600 font-medium">データの取得に失敗しました</p>
             </div>
           )}
 
           {/* Competition List */}
           {competitionsData && competitionsData.items.length > 0 && (
             <>
-              <div className="divide-y-2 divide-slate-100">
+              <div className="space-y-4">
                 {competitionsData.items.map((competition) => (
-                  <div key={competition.id} className="px-8 py-6 hover:bg-slate-50/50 transition-all group relative">
-                    <div className="absolute left-0 top-0 bottom-0 w-1 bg-blue-600 opacity-0 group-hover:opacity-100 transition-opacity"></div>
-                    <div className="flex items-start justify-between gap-8">
-                      <div className="flex-1 min-w-0">
-                        <h3 className="text-lg font-bold text-slate-900 mb-4 group-hover:text-blue-700 transition-colors">
-                          {competition.title}
-                        </h3>
+                  <div
+                    key={competition.id}
+                    className="bg-white rounded-xl border border-slate-200/60 hover:border-slate-300 hover:shadow-lg transition-all duration-200 group overflow-hidden"
+                  >
+                    <div className="px-8 py-6">
+                      <div className="flex items-start justify-between gap-8">
+                        <div className="flex-1 min-w-0">
+                          <h3
+                            onClick={() => router.push(`/competitions/${competition.id}`)}
+                            className="text-lg font-semibold text-slate-900 mb-3 group-hover:text-blue-600 transition-colors cursor-pointer tracking-tight"
+                          >
+                            {competition.title}
+                          </h3>
 
                         {/* 最優先情報: 評価指標とタスクタイプ */}
                         <div className="flex flex-wrap items-center gap-2.5 mb-4">
                           <StatusBadge status={competition.status} />
                           {competition.metric && isDisplayableMetric(competition.metric) && (
-                            <span className="inline-flex items-center gap-2 px-4 py-1.5 text-xs font-bold bg-gradient-to-r from-blue-500 to-blue-600 text-white rounded-lg shadow-sm">
-                              📊 {competition.metric}
-                            </span>
+                            <MetricBadge
+                              metric={competition.metric}
+                              description={competition.metric_description}
+                            />
                           )}
-                          {competition.tags.filter(tag =>
+                          {competition.tags?.filter(tag =>
                             tag.includes('分類') || tag.includes('回帰') || tag.includes('物体検出') ||
                             tag.includes('セグメンテーション') || tag.includes('生成') || tag.includes('ランキング')
-                          ).map((tag, idx) => (
+                          )?.map((tag, idx) => (
                             <span
                               key={idx}
-                              className="inline-flex items-center gap-2 px-4 py-1.5 text-xs font-bold bg-gradient-to-r from-emerald-500 to-green-600 text-white rounded-lg shadow-sm"
+                              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-xl"
                             >
                               🎯 {tag}
                             </span>
@@ -243,6 +252,11 @@ export default function Home() {
 
                         {/* 構造化要約 */}
                         <StructuredSummaryDisplay summary={competition.summary} />
+
+                        {/* データセット情報 */}
+                        {competition.dataset_info && (
+                          <DatasetInfoDisplay datasetInfo={competition.dataset_info} />
+                        )}
 
                         {/* 補助情報 */}
                         <div className="flex items-center gap-5 text-sm text-slate-600 mb-4 font-medium">
@@ -275,13 +289,14 @@ export default function Home() {
                         href={competition.url}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="shrink-0 px-6 py-3 text-sm font-bold text-white bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 rounded-lg shadow-md hover:shadow-lg transition-all flex items-center gap-2 group"
+                        className="shrink-0 px-5 py-2.5 text-sm font-medium text-slate-700 bg-slate-50 hover:bg-slate-100 border border-slate-200 hover:border-slate-300 rounded-lg transition-all flex items-center gap-2 group/btn"
                       >
                         <span>Kaggle で見る</span>
-                        <svg className="w-4 h-4 group-hover:translate-x-1 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                        <svg className="w-4 h-4 group-hover/btn:translate-x-0.5 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
                         </svg>
                       </a>
+                    </div>
                     </div>
                   </div>
                 ))}
@@ -289,24 +304,24 @@ export default function Home() {
 
               {/* Pagination */}
               {competitionsData.total_pages > 1 && (
-                <div className="px-8 py-5 border-t-2 border-slate-200 bg-slate-50 flex items-center justify-between rounded-b-xl">
+                <div className="mt-6 px-6 py-4 bg-slate-50/50 border border-slate-200/60 rounded-xl flex items-center justify-between">
                   <button
                     onClick={() => setPage((p) => Math.max(1, p - 1))}
                     disabled={page === 1}
-                    className="px-5 py-2.5 text-sm font-semibold text-slate-700 bg-white border-2 border-slate-300 rounded-lg hover:bg-slate-50 hover:border-blue-400 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-white disabled:hover:border-slate-300 transition-all flex items-center gap-2 shadow-sm"
+                    className="px-4 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 hover:border-slate-300 disabled:opacity-40 disabled:cursor-not-allowed transition-all flex items-center gap-2"
                   >
                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
                     </svg>
                     <span>前へ</span>
                   </button>
-                  <span className="text-sm text-slate-700 font-medium">
-                    ページ <span className="px-3 py-1 bg-blue-600 text-white font-bold rounded-md">{page}</span> / {competitionsData.total_pages}
+                  <span className="text-sm text-slate-600 font-medium">
+                    ページ <span className="px-2.5 py-1 bg-blue-600 text-white font-semibold rounded-lg mx-1">{page}</span> / {competitionsData.total_pages}
                   </span>
                   <button
                     onClick={() => setPage((p) => Math.min(competitionsData.total_pages, p + 1))}
                     disabled={page === competitionsData.total_pages}
-                    className="px-5 py-2.5 text-sm font-semibold text-slate-700 bg-white border-2 border-slate-300 rounded-lg hover:bg-slate-50 hover:border-blue-400 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-white disabled:hover:border-slate-300 transition-all flex items-center gap-2 shadow-sm"
+                    className="px-4 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 hover:border-slate-300 disabled:opacity-40 disabled:cursor-not-allowed transition-all flex items-center gap-2"
                   >
                     <span>次へ</span>
                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -321,7 +336,7 @@ export default function Home() {
           {/* Empty State */}
           {competitionsData && competitionsData.items.length === 0 && (
             <div className="px-6 py-12 text-center">
-              <p className="text-gray-600">条件に一致するコンペがありません</p>
+              <p className="text-slate-600 font-medium">条件に一致するコンペがありません</p>
             </div>
           )}
         </div>
@@ -337,34 +352,40 @@ function StructuredSummaryDisplay({ summary }: { summary: string }) {
     const parsed: StructuredSummary = JSON.parse(summary)
 
     return (
-      <div className="text-sm text-gray-700 mb-3 space-y-2">
+      <div className="mb-4 bg-slate-50 rounded-lg p-4 border border-slate-200 space-y-3">
         {/* Overview */}
-        <p className="text-gray-800">{parsed.overview}</p>
+        <div>
+          <p className="text-sm text-slate-800 leading-relaxed">{parsed.overview}</p>
+        </div>
 
-        {/* Details */}
-        <div className="grid grid-cols-2 gap-2 text-xs">
-          <div>
-            <span className="font-medium text-gray-600">予測対象:</span>{' '}
-            <span className="text-gray-800">{parsed.objective}</span>
+        {/* Details Grid */}
+        <div className="grid grid-cols-2 gap-3">
+          <div className="bg-white rounded-md p-2.5 border border-slate-200">
+            <div className="text-xs font-semibold text-slate-600 mb-1">🎯 予測対象</div>
+            <div className="text-xs text-slate-800 leading-relaxed">{parsed.objective}</div>
           </div>
-          <div>
-            <span className="font-medium text-gray-600">データ:</span>{' '}
-            <span className="text-gray-800">{parsed.data}</span>
+          <div className="bg-white rounded-md p-2.5 border border-slate-200">
+            <div className="text-xs font-semibold text-slate-600 mb-1">📊 データ</div>
+            <div className="text-xs text-slate-800 leading-relaxed">{parsed.data}</div>
           </div>
         </div>
 
-        <div className="text-xs">
-          <span className="font-medium text-gray-600">価値:</span>{' '}
-          <span className="text-gray-800">{parsed.business_value}</span>
+        {/* Business Value */}
+        <div className="bg-white rounded-md p-2.5 border border-slate-200">
+          <div className="text-xs font-semibold text-slate-600 mb-1">💼 ビジネス価値</div>
+          <div className="text-xs text-slate-800 leading-relaxed">{parsed.business_value}</div>
         </div>
 
         {/* Key Challenges */}
         {parsed.key_challenges && parsed.key_challenges.length > 0 && (
-          <div className="text-xs">
-            <span className="font-medium text-gray-600">主な課題:</span>
-            <ul className="ml-4 mt-1 list-disc text-gray-700">
+          <div className="bg-white rounded-md p-2.5 border border-slate-200">
+            <div className="text-xs font-semibold text-slate-600 mb-1.5">⚡ 主な課題</div>
+            <ul className="space-y-1">
               {parsed.key_challenges.map((challenge, idx) => (
-                <li key={idx}>{challenge}</li>
+                <li key={idx} className="flex items-start gap-1.5 text-xs text-slate-700">
+                  <span className="text-blue-600 mt-0.5">•</span>
+                  <span>{challenge}</span>
+                </li>
               ))}
             </ul>
           </div>
@@ -373,7 +394,133 @@ function StructuredSummaryDisplay({ summary }: { summary: string }) {
     )
   } catch {
     // JSON parsing failed, display as plain text
-    return <p className="text-sm text-gray-600 mb-2">{summary}</p>
+    return <p className="text-sm text-slate-600 mb-2">{summary}</p>
+  }
+}
+
+// Helper component for metric badge with tooltip
+function MetricBadge({ metric, description }: { metric: string; description?: string }) {
+  if (!description) {
+    // 説明がない場合は通常のバッジ
+    return (
+      <span className="inline-flex items-center gap-2 px-3 py-1.5 text-xs font-semibold bg-blue-50 text-blue-700 border border-blue-200 rounded-xl">
+        📊 {metric}
+      </span>
+    )
+  }
+
+  // 説明がある場合はツールチップ付きバッジ
+  return (
+    <div className="group/metric relative inline-block">
+      <span className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold bg-blue-50 text-blue-700 border border-blue-200 rounded-xl cursor-help hover:bg-blue-100 hover:border-blue-300 transition-colors">
+        📊 {metric}
+        <svg className="w-3 h-3 opacity-60" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+        </svg>
+      </span>
+      {/* ツールチップ */}
+      <div className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover/metric:block z-50 w-80">
+        <div className="bg-slate-900 text-white text-xs rounded-lg p-3 shadow-xl">
+          <div className="font-semibold text-blue-200 mb-1">📊 評価指標について</div>
+          <div className="text-slate-100 leading-relaxed">{description}</div>
+          {/* 吹き出しの矢印 */}
+          <div className="absolute top-full left-1/2 -translate-x-1/2 -mt-px">
+            <div className="border-8 border-transparent border-t-slate-900"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// Helper component for dataset info display
+function DatasetInfoDisplay({ datasetInfo }: { datasetInfo: string }) {
+  const [isExpanded, setIsExpanded] = useState(false)
+
+  try {
+    const parsed: DatasetInfo = JSON.parse(datasetInfo)
+
+    return (
+      <div className="mb-3 bg-slate-50 border border-slate-200 rounded-lg overflow-hidden">
+        {/* ヘッダー（クリックで展開/折りたたみ） */}
+        <button
+          onClick={() => setIsExpanded(!isExpanded)}
+          className="w-full px-4 py-2.5 flex items-center justify-between hover:bg-slate-100 transition-colors"
+        >
+          <div className="flex items-center gap-2">
+            <span className="text-blue-600 text-base">📦</span>
+            <span className="text-sm font-semibold text-slate-700">データセット情報</span>
+            {parsed.total_size && (
+              <span className="px-2 py-0.5 text-xs font-bold bg-blue-100 text-blue-700 rounded">
+                {parsed.total_size}
+              </span>
+            )}
+          </div>
+          <svg
+            className={`w-5 h-5 text-slate-400 transition-transform ${isExpanded ? 'rotate-180' : ''}`}
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+          </svg>
+        </button>
+
+        {/* 展開コンテンツ */}
+        {isExpanded && (
+          <div className="px-4 pb-3 pt-1 space-y-3 border-t border-slate-200 bg-white">
+            {/* データ概要 */}
+            {parsed.description && (
+              <div>
+                <div className="text-xs font-semibold text-slate-600 mb-1">概要</div>
+                <div className="text-xs text-slate-700">{parsed.description}</div>
+              </div>
+            )}
+
+            {/* ファイル一覧 */}
+            {parsed.files && parsed.files.length > 0 && (
+              <div>
+                <div className="text-xs font-semibold text-slate-600 mb-1.5">
+                  📁 ファイル ({parsed.files.length}件)
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {parsed.files.map((file, idx) => (
+                    <span
+                      key={idx}
+                      className="inline-block px-2.5 py-1 text-xs font-mono font-medium bg-slate-100 text-slate-700 rounded border border-slate-200"
+                    >
+                      {file}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* 特徴量・カラム一覧 */}
+            {parsed.features && parsed.features.length > 0 && (
+              <div>
+                <div className="text-xs font-semibold text-slate-600 mb-1.5">
+                  🔧 主要な特徴量 ({parsed.features.length}件)
+                </div>
+                <div className="grid grid-cols-2 gap-1.5">
+                  {parsed.features.map((feature, idx) => (
+                    <span
+                      key={idx}
+                      className="inline-block px-2.5 py-1 text-xs font-mono font-medium bg-blue-50 text-blue-700 rounded border border-blue-200"
+                    >
+                      {feature}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    )
+  } catch {
+    // JSON parsing failed
+    return null
   }
 }
 
@@ -381,7 +528,7 @@ function StructuredSummaryDisplay({ summary }: { summary: string }) {
 function StatusBadge({ status }: { status: string }) {
   if (status === 'active') {
     return (
-      <span className="inline-flex items-center gap-2 px-4 py-1.5 text-xs font-bold bg-gradient-to-r from-emerald-100 to-green-100 text-emerald-800 rounded-lg border-2 border-emerald-300 shadow-sm">
+      <span className="inline-flex items-center gap-2 px-3 py-1.5 text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-xl">
         <span className="relative flex h-2 w-2">
           <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-500 opacity-75"></span>
           <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-600"></span>
@@ -391,7 +538,7 @@ function StatusBadge({ status }: { status: string }) {
     )
   }
   return (
-    <span className="inline-flex items-center gap-2 px-4 py-1.5 text-xs font-bold bg-slate-100 text-slate-600 rounded-lg border-2 border-slate-300">
+    <span className="inline-flex items-center gap-2 px-3 py-1.5 text-xs font-semibold bg-slate-100 text-slate-600 border border-slate-200 rounded-xl">
       <span className="w-2 h-2 bg-slate-400 rounded-full"></span>
       終了済み
     </span>
