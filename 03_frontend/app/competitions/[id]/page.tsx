@@ -694,28 +694,16 @@ function DiscussionTab({ competitionId }: { competitionId: string }) {
 
             {/* コンテンツ */}
             <div className="flex-1 overflow-y-auto p-6">
-              {selectedDiscussion.summary || selectedDiscussion.content ? (
-                <div className="space-y-4">
-                  {selectedDiscussion.summary && (
-                    <div>
-                      <h3 className="text-sm font-semibold text-slate-700 mb-2">📝 要約</h3>
-                      <p className="text-slate-700 leading-relaxed whitespace-pre-wrap">
-                        {selectedDiscussion.summary}
-                      </p>
-                    </div>
-                  )}
-                  {selectedDiscussion.content && (
-                    <div>
-                      <h3 className="text-sm font-semibold text-slate-700 mb-2">📄 全文</h3>
-                      <div className="text-slate-600 text-sm leading-relaxed whitespace-pre-wrap max-h-96 overflow-y-auto bg-slate-50 p-4 rounded-lg">
-                        {selectedDiscussion.content}
-                      </div>
-                    </div>
-                  )}
+              {selectedDiscussion.summary ? (
+                <div>
+                  <h3 className="text-sm font-semibold text-slate-700 mb-2">📝 要約</h3>
+                  <p className="text-slate-700 leading-relaxed whitespace-pre-wrap">
+                    {selectedDiscussion.summary}
+                  </p>
                 </div>
               ) : (
                 <div className="text-center py-8">
-                  <p className="text-slate-500">詳細情報がまだ取得されていません</p>
+                  <p className="text-slate-500">要約がまだ生成されていません</p>
                 </div>
               )}
             </div>
