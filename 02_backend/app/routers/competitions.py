@@ -34,7 +34,8 @@ def get_competitions(
     status: Optional[str] = Query(None, description="ステータスフィルタ（active/completed）"),
     search: Optional[str] = Query(None, description="タイトル検索"),
     sort_by: str = Query("created_at", description="ソート項目"),
-    order: str = Query("desc", description="ソート順（asc/desc）")
+    order: str = Query("desc", description="ソート順（asc/desc）"),
+    service: Annotated[CompetitionService, Depends(get_competition_service)] = None
 ):
     """
     コンペ一覧を取得（ページネーション、フィルタ、検索、ソート対応）
@@ -50,61 +51,45 @@ def get_competitions(
     Returns:
         dict: {items: [...], total: int, page: int, limit: int, total_pages: int}
     """
-    conn = sqlite3.connect(DATABASE_PATH)
-    conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
-
-    # WHERE句の構築
-    where_clauses = []
-    params = []
-
+    # フィルター構築
+    filters = {}
     if status:
-        where_clauses.append("status = ?")
-        params.append(status)
+        filters["status"] = status
 
-    if search:
-        where_clauses.append("title LIKE ?")
-        params.append(f"%{search}%")
-
-    where_sql = " AND ".join(where_clauses) if where_clauses else "1=1"
-
-    # 総件数取得
-    count_query = f"SELECT COUNT(*) as count FROM competitions WHERE {where_sql}"
-    cursor.execute(count_query, params)
-    total = cursor.fetchone()["count"]
-
-    # ソート順の検証と設定
-    order_sql = "ASC" if order.lower() == "asc" else "DESC"
-
-    # データ取得（ページネーション）
+    # ページネーション用のオフセット計算
     offset = (page - 1) * limit
-    data_query = f"""
-        SELECT * FROM competitions
-        WHERE {where_sql}
-        ORDER BY {sort_by} {order_sql}
-        LIMIT ? OFFSET ?
-    """
-    cursor.execute(data_query, params + [limit, offset])
-    rows = cursor.fetchall()
-    conn.close()
 
-    # JSON形式に変換
-    items = []
-    for row in rows:
-        item = dict(row)
-        # JSON文字列をPythonリストに変換
-        import json
-        if item.get("tags"):
-            item["tags"] = json.loads(item["tags"])
-        if item.get("data_types"):
-            item["data_types"] = json.loads(item["data_types"])
-        items.append(item)
+    # サービス層を使用してデータ取得
+    items = service.list_competitions(
+        limit=limit,
+        offset=offset,
+        filters=filters,
+        sort_by=sort_by,
+        order=order,
+        search=search
+    )
+
+    # 総件数取得（検索/フィルターを考慮）
+    total = service.count_competitions(filters=filters)
+
+    # 検索時の総件数調整（TODO: サービス層で最適化すべき）
+    if search:
+        # 検索結果の総件数を再計算
+        all_items = service.list_competitions(
+            limit=10000,
+            offset=0,
+            filters=filters,
+            sort_by=sort_by,
+            order=order,
+            search=search
+        )
+        total = len(all_items)
 
     # ページネーション情報
     total_pages = math.ceil(total / limit) if total > 0 else 0
 
     return {
-        "items": items,
+        "items": [item.to_dict() for item in items],
         "total": total,
         "page": page,
         "limit": limit,

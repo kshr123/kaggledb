@@ -95,6 +95,8 @@ class CompetitionRepository(BaseRepository):
         limit: int = 100,
         offset: int = 0,
         filters: Optional[Dict[str, Any]] = None,
+        sort_by: str = "created_at",
+        order: str = "desc",
     ) -> List[Competition]:
         """
         コンペ一覧を取得
@@ -103,6 +105,8 @@ class CompetitionRepository(BaseRepository):
             limit: 取得件数
             offset: オフセット
             filters: フィルター条件
+            sort_by: ソート項目（created_at, end_date, title など）
+            order: ソート順（asc/desc）
 
         Returns:
             List[Competition]: コンペティション一覧
@@ -122,12 +126,15 @@ class CompetitionRepository(BaseRepository):
 
             where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
 
+            # ソート順の検証と設定
+            order_sql = "ASC" if order.lower() == "asc" else "DESC"
+
             # クエリ実行
             cursor.execute(
                 f"""
                 SELECT * FROM competitions
                 {where_sql}
-                ORDER BY created_at DESC
+                ORDER BY {sort_by} {order_sql}
                 LIMIT ? OFFSET ?
                 """,
                 params + [limit, offset],

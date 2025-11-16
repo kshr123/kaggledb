@@ -34,6 +34,9 @@ class CompetitionService:
         limit: int = 100,
         offset: int = 0,
         filters: Optional[Dict[str, Any]] = None,
+        sort_by: str = "created_at",
+        order: str = "desc",
+        search: Optional[str] = None,
     ) -> List[Competition]:
         """
         コンペ一覧を取得
@@ -42,11 +45,37 @@ class CompetitionService:
             limit: 取得件数
             offset: オフセット
             filters: フィルター条件
+            sort_by: ソート項目
+            order: ソート順（asc/desc）
+            search: タイトル検索クエリ
 
         Returns:
             List[Competition]: コンペティション一覧
         """
-        return self.repository.list(limit=limit, offset=offset, filters=filters)
+        # 検索クエリがある場合は検索結果を返す
+        if search:
+            # 全件取得してフィルタリング（パフォーマンス改善の余地あり）
+            all_comps = self.repository.list(
+                limit=10000,
+                offset=0,
+                filters=filters,
+                sort_by=sort_by,
+                order=order
+            )
+            results = [
+                comp for comp in all_comps
+                if search.lower() in comp.title.lower()
+            ]
+            # ページネーション適用
+            return results[offset:offset + limit]
+
+        return self.repository.list(
+            limit=limit,
+            offset=offset,
+            filters=filters,
+            sort_by=sort_by,
+            order=order
+        )
 
     def create_competition(self, competition: Competition) -> Competition:
         """
