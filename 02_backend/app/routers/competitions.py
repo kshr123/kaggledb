@@ -471,3 +471,389 @@ def fetch_discussions(competition_id: str):
         "updated": updated_count,
         "total": saved_count + updated_count
     }
+
+
+@router.post("/competitions/{competition_id}/solutions/fetch")
+def fetch_solutions(competition_id: str, enable_ai: bool = False):
+    """
+    コンペティションの解法を取得してDBに保存
+
+    Args:
+        competition_id: コンペID（slug）
+        enable_ai: AI分析を有効にするか（要約・技術抽出）
+
+    Returns:
+        dict: 取得結果（新規保存数、更新数、合計数、AI分析数）
+    """
+    import sys
+    import os
+    import re
+    from app.services.scraper_service import get_scraper_service
+    from app.services.llm_service import get_llm_service
+
+    # ヘルパー関数
+    def clean_title(title: str, author: str | None = None) -> str:
+        """タイトルから余分な情報（投稿者、日付等）を除去"""
+        if ' · ' in title:
+            title = title.split(' · ')[0]
+        if 'Last comment' in title:
+            title = title.split('Last comment')[0]
+        if 'Posted' in title:
+            title = title.split('Posted')[0]
+        if author and title.endswith(author):
+            title = title[:-len(author)]
+        return title.strip()
+
+    def is_solution_discussion(title: str) -> tuple[bool, int | None]:
+        """タイトルから解法ディスカッションかどうかを判定"""
+        title_lower = title.lower()
+        solution_keywords = [
+            'solution', 'approach', 'write-up', 'writeup', '解法',
+            'our solution', 'my solution'
+        ]
+        rank_patterns = [
+            r'(\d+)(?:st|nd|rd|th)\s+place',
+            r'#(\d+)\s+solution',
+            r'rank\s+(\d+)',
+        ]
+
+        has_solution_keyword = any(keyword in title_lower for keyword in solution_keywords)
+
+        rank = None
+        for pattern in rank_patterns:
+            match = re.search(pattern, title_lower)
+            if match:
+                rank = int(match.group(1))
+                break
+
+        if rank:
+            return True, rank
+        if has_solution_keyword:
+            return True, None
+        return False, None
+
+    # コンペの存在確認
+    conn = sqlite3.connect(DATABASE_PATH)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT id FROM competitions WHERE id = ?", (competition_id,))
+    if not cursor.fetchone():
+        conn.close()
+        raise HTTPException(status_code=404, detail="Competition not found")
+
+    conn.close()
+
+    # スクレイピング実行
+    scraper = get_scraper_service()
+    discussions = scraper.get_discussions(
+        comp_id=competition_id,
+        max_pages=3,  # 最大60件のディスカッションを取得
+        force_refresh=True
+    )
+
+    if not discussions:
+        raise HTTPException(status_code=500, detail="Failed to fetch discussions")
+
+    # 解法をフィルター
+    solutions = []
+    for disc in discussions:
+        is_solution, rank = is_solution_discussion(disc['title'])
+        if is_solution:
+            clean_disc = disc.copy()
+            clean_disc['title'] = clean_title(disc['title'], disc.get('author'))
+
+            solutions.append({
+                **clean_disc,
+                'rank': rank,
+                'type': 'discussion'
+            })
+
+    if not solutions:
+        return {
+            "success": True,
+            "saved": 0,
+            "updated": 0,
+            "total": 0,
+            "ai_analyzed": 0
+        }
+
+    # データベースに保存
+    conn = sqlite3.connect(DATABASE_PATH)
+    cursor = conn.cursor()
+
+    saved_count = 0
+    updated_count = 0
+
+    for sol in solutions:
+        # 既存チェック
+        cursor.execute(
+            "SELECT id FROM solutions WHERE competition_id = ? AND url = ?",
+            (competition_id, sol['url'])
+        )
+        existing = cursor.fetchone()
+
+        now = datetime.now().isoformat()
+
+        # メダル判定
+        medal = None
+        if sol['rank']:
+            if sol['rank'] == 1:
+                medal = 'gold'
+            elif sol['rank'] == 2:
+                medal = 'silver'
+            elif sol['rank'] == 3:
+                medal = 'bronze'
+
+        if existing:
+            # 更新
+            cursor.execute("""
+                UPDATE solutions
+                SET title = ?,
+                    author = ?,
+                    author_tier = ?,
+                    tier_color = ?,
+                    type = ?,
+                    medal = ?,
+                    rank = ?,
+                    vote_count = ?,
+                    comment_count = ?,
+                    updated_at = ?
+                WHERE id = ?
+            """, (
+                sol['title'],
+                sol.get('author'),
+                sol.get('author_tier'),
+                sol.get('tier_color'),
+                sol['type'],
+                medal,
+                sol['rank'],
+                sol['vote_count'],
+                sol['comment_count'],
+                now,
+                existing[0]
+            ))
+            updated_count += 1
+        else:
+            # 新規作成
+            cursor.execute("""
+                INSERT INTO solutions (
+                    competition_id,
+                    title,
+                    author,
+                    author_tier,
+                    tier_color,
+                    url,
+                    type,
+                    medal,
+                    rank,
+                    vote_count,
+                    comment_count,
+                    created_at,
+                    updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                competition_id,
+                sol['title'],
+                sol.get('author'),
+                sol.get('author_tier'),
+                sol.get('tier_color'),
+                sol['url'],
+                sol['type'],
+                medal,
+                sol['rank'],
+                sol['vote_count'],
+                sol['comment_count'],
+                now,
+                now
+            ))
+            saved_count += 1
+
+    conn.commit()
+    conn.close()
+
+    # AI分析
+    analyzed_count = 0
+    if enable_ai and solutions:
+        llm = get_llm_service()
+
+        conn = sqlite3.connect(DATABASE_PATH)
+        cursor = conn.cursor()
+
+        for sol in solutions:
+            # 既にsummaryとtechniquesがある場合はスキップ
+            cursor.execute(
+                "SELECT summary, techniques FROM solutions WHERE competition_id = ? AND url = ?",
+                (competition_id, sol['url'])
+            )
+            existing = cursor.fetchone()
+
+            if existing and existing[0] and existing[1]:
+                continue
+
+            # 解法の詳細を取得
+            detail = scraper.get_discussion_detail(sol['url'])
+
+            if not detail or not detail.get('content'):
+                continue
+
+            content = detail['content']
+
+            # 要約生成
+            summary = llm.summarize_discussion(content, sol['title'])
+
+            # 技術抽出
+            techniques_json = llm.extract_solution_techniques(content, sol['title'])
+
+            # データベース更新（contentは保存しない）
+            cursor.execute("""
+                UPDATE solutions
+                SET summary = ?,
+                    techniques = ?,
+                    updated_at = ?
+                WHERE competition_id = ? AND url = ?
+            """, (
+                summary,
+                techniques_json,
+                datetime.now().isoformat(),
+                competition_id,
+                sol['url']
+            ))
+
+            analyzed_count += 1
+
+        conn.commit()
+        conn.close()
+
+    return {
+        "success": True,
+        "saved": saved_count,
+        "updated": updated_count,
+        "total": saved_count + updated_count,
+        "ai_analyzed": analyzed_count
+    }
+
+
+def extract_links_from_content(content: str) -> dict:
+    """
+    本文からリンクを抽出
+
+    Args:
+        content: 本文
+
+    Returns:
+        dict: {
+            "notebooks": [...],
+            "github": [...],
+            "other": [...]
+        }
+    """
+    import re
+
+    # URLパターン
+    url_pattern = r'https?://[^\s<>"{}|\\^`\[\]]+'
+
+    # 全URLを抽出
+    urls = re.findall(url_pattern, content)
+
+    # カテゴリ分け
+    notebooks = []
+    github = []
+    other = []
+
+    for url in urls:
+        # 重複排除
+        if 'kaggle.com/code/' in url or 'kaggle.com/notebooks/' in url:
+            if url not in notebooks:
+                notebooks.append(url)
+        elif 'github.com/' in url:
+            if url not in github:
+                github.append(url)
+        else:
+            if url not in other:
+                other.append(url)
+
+    return {
+        "notebooks": notebooks[:5],  # 最大5件
+        "github": github[:5],
+        "other": other[:5]
+    }
+
+
+@router.post("/solutions/{solution_id}/summarize")
+def summarize_solution(solution_id: int):
+    """
+    個別の解法を要約（オンデマンド）
+
+    Args:
+        solution_id: 解法ID
+
+    Returns:
+        dict: 構造化された要約とリンク
+    """
+    from app.services.scraper_service import get_scraper_service
+    from app.services.llm_service import get_llm_service
+
+    # 解法の存在確認
+    conn = sqlite3.connect(DATABASE_PATH)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT * FROM solutions WHERE id = ?", (solution_id,))
+    solution = cursor.fetchone()
+
+    if not solution:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Solution not found")
+
+    solution_dict = dict(solution)
+    conn.close()
+
+    # 解法の詳細を取得
+    scraper = get_scraper_service()
+    detail = scraper.get_discussion_detail(solution_dict['url'])
+
+    if not detail or not detail.get('content'):
+        raise HTTPException(status_code=500, detail="Failed to fetch solution content")
+
+    content = detail['content']
+
+    # リンク抽出
+    links = extract_links_from_content(content)
+
+    # 構造化要約を生成
+    llm = get_llm_service()
+    structured_summary = llm.generate_structured_solution_summary(
+        content=content,
+        title=solution_dict['title']
+    )
+
+    # 技術抽出
+    techniques_json = llm.extract_solution_techniques(content, solution_dict['title'])
+
+    # データベース更新（contentは保存しない）
+    conn = sqlite3.connect(DATABASE_PATH)
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        UPDATE solutions
+        SET summary = ?,
+            techniques = ?,
+            updated_at = ?
+        WHERE id = ?
+    """, (
+        structured_summary,
+        techniques_json,
+        datetime.now().isoformat(),
+        solution_id
+    ))
+
+    conn.commit()
+    conn.close()
+
+    return {
+        "success": True,
+        "summary": structured_summary,
+        "techniques": techniques_json,
+        "links": links
+    }

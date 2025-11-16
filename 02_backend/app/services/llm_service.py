@@ -672,6 +672,236 @@ JSON形式のみを出力してください。前置きや説明は不要です�
 
         return ""
 
+    def extract_solution_techniques(self, content: str, title: str = "") -> str:
+        """
+        解法の本文から使用技術を抽出
+
+        Args:
+            content: 解法の本文
+            title: 解法のタイトル
+
+        Returns:
+            技術のJSON文字列（配列形式）
+            例: ["XGBoost", "特徴量エンジニアリング", "Target Encoding", "アンサンブル学習"]
+        """
+        if not content:
+            return "[]"
+
+        # 長すぎる場合は最初の部分のみ使用（トークン制限対策）
+        max_content_length = 4000
+        if len(content) > max_content_length:
+            content = content[:max_content_length] + "..."
+
+        prompt = f"""あなたはKaggle解法の技術分析専門家です。
+以下の解法を読み、使用されている技術・手法を抽出してください。
+
+【タイトル】
+{title}
+
+【本文】
+{content}
+
+【タスク】
+この解法で使用されている技術・手法をJSON配列形式で出力してください。
+
+【抽出対象】
+1. **機械学習モデル**: XGBoost, LightGBM, CatBoost, Random Forest, Neural Networks, Transformer, CNN, RNN, LSTM など
+2. **前処理・特徴量エンジニアリング**: Target Encoding, One-Hot Encoding, 特徴量選択, 欠損値補完, 正規化, 標準化 など
+3. **学習テクニック**: アンサンブル学習, スタッキング, K-Fold交差検証, Stratified K-Fold, ハイパーパラメータチューニング など
+4. **データ拡張**: Data Augmentation, Mixup, CutMix など
+5. **その他の重要な技術**: Transfer Learning, Fine-tuning, Attention機構, 事前学習モデル など
+
+【要件】
+- 本文に明示的に記載されている技術のみ抽出
+- 技術名は日本語で（ただし固有名詞はそのまま）
+  - 例: "XGBoost", "特徴量エンジニアリング", "K-Fold交差検証"
+- 重要度の高い順に並べる
+- 5-10個程度に絞る
+- 推測は禁止、本文に書かれていない技術は含めない
+- JSON配列形式のみを出力（説明や前置きは不要）
+
+【出力例】
+["XGBoost", "LightGBM", "特徴量エンジニアリング", "Target Encoding", "アンサンブル学習", "K-Fold交差検証"]"""
+
+        for attempt in range(self.max_retries):
+            try:
+                response = self.client.chat.completions.create(
+                    model=self.model,
+                    messages=[
+                        {"role": "system", "content": "あなたはKaggle解法の技術分析専門家です。JSON形式で回答してください。"},
+                        {"role": "user", "content": prompt}
+                    ],
+                    temperature=0.2,
+                    max_tokens=300,
+                    response_format={"type": "json_object"}
+                )
+
+                result_text = response.choices[0].message.content.strip()
+
+                # JSON配列が直接返される場合と、{"techniques": [...]}の形式の場合に対応
+                try:
+                    result = json.loads(result_text)
+
+                    # {"techniques": [...]} 形式の場合
+                    if isinstance(result, dict) and "techniques" in result:
+                        techniques = result["techniques"]
+                    # 直接配列の場合（本来はこれが期待される形式）
+                    elif isinstance(result, list):
+                        techniques = result
+                    # その他の場合は空配列
+                    else:
+                        techniques = []
+
+                    # 配列であることを確認
+                    if not isinstance(techniques, list):
+                        techniques = []
+
+                    return json.dumps(techniques, ensure_ascii=False)
+
+                except json.JSONDecodeError:
+                    if attempt < self.max_retries - 1:
+                        print(f"JSON解析エラー（リトライ {attempt + 1}/{self.max_retries}）")
+                        time.sleep(self.retry_delay)
+                        continue
+                    else:
+                        return "[]"
+
+            except Exception as e:
+                if attempt < self.max_retries - 1:
+                    print(f"技術抽出エラー（リトライ {attempt + 1}/{self.max_retries}）: {e}")
+                    time.sleep(self.retry_delay)
+                else:
+                    print(f"技術抽出エラー（最終試行失敗）: {e}")
+                    return "[]"
+
+        return "[]"
+
+    def generate_structured_solution_summary(self, content: str, title: str = "") -> str:
+        """
+        解法の本文から構造化された要約を生成
+
+        Args:
+            content: 解法の本文
+            title: 解法のタイトル
+
+        Returns:
+            構造化要約のJSON文字列
+            {
+                "overview": "概要（2-3文）",
+                "approach": "アプローチ・手法",
+                "key_points": ["ポイント1", "ポイント2", ...],
+                "results": "結果・スコア",
+                "techniques": ["技術1", "技術2", ...]
+            }
+        """
+        if not content:
+            return "{}"
+
+        # 長すぎる場合は最初の部分のみ使用
+        max_content_length = 5000
+        if len(content) > max_content_length:
+            content = content[:max_content_length] + "..."
+
+        prompt = f"""あなたはKaggle解法の分析専門家です。
+以下の解法を読み、構造化された要約を作成してください。
+
+【タイトル】
+{title}
+
+【本文】
+{content}
+
+【タスク】
+以下のJSON形式で構造化された要約を出力してください：
+
+{{
+  "overview": "解法の概要を2-3文で簡潔に（100-150文字）",
+  "approach": "アプローチや手法の説明（100-200文字）",
+  "key_points": [
+    "重要なポイント1",
+    "重要なポイント2",
+    "重要なポイント3"
+  ],
+  "results": "結果やスコア、順位などの成果（50-100文字、記載がない場合は空文字列）",
+  "techniques": ["使用技術1", "使用技術2", "使用技術3"]
+}}
+
+【要件】
+- 全て日本語で記述（技術名の固有名詞はそのまま）
+- overview: 解法の全体像を簡潔に
+- approach: どのような手法・アプローチを取ったか
+- key_points: 特に重要なポイントを3-5個の配列で
+- results: 達成したスコアや順位（明記されている場合のみ）
+- techniques: 使用した主要な技術を3-7個の配列で
+- 本文に明記されている情報のみ抽出
+- 推測はしない
+- JSON形式のみを出力（説明や前置きは不要）
+
+【出力例】
+{{
+  "overview": "この解法では、XGBoostとLightGBMのアンサンブルを使用し、特徴量エンジニアリングに重点を置いています。5-Fold交差検証により安定したモデルを構築し、リーダーボードで上位にランクインしました。",
+  "approach": "まず、データの前処理として欠損値補完と外れ値除去を実施。次に、Target EncodingとOne-Hot Encodingを組み合わせた特徴量エンジニアリングを行いました。最終的に、異なるハイパーパラメータで学習した複数のモデルをアンサンブルしています。",
+  "key_points": [
+    "Target Encodingによるカテゴリ変数の効果的な変換",
+    "5-Fold Stratified交差検証による過学習防止",
+    "XGBoostとLightGBMの重み付きアンサンブル",
+    "ハイパーパラメータチューニングによる精度向上"
+  ],
+  "results": "Public LB: 0.875, Private LB: 0.872で5位を獲得",
+  "techniques": ["XGBoost", "LightGBM", "Target Encoding", "5-Fold交差検証", "アンサンブル学習", "ハイパーパラメータチューニング"]
+}}"""
+
+        for attempt in range(self.max_retries):
+            try:
+                response = self.client.chat.completions.create(
+                    model=self.model,
+                    messages=[
+                        {"role": "system", "content": "あなたはKaggle解法の分析専門家です。JSON形式で回答してください。"},
+                        {"role": "user", "content": prompt}
+                    ],
+                    temperature=0.3,
+                    max_tokens=1200,
+                    response_format={"type": "json_object"}
+                )
+
+                result_text = response.choices[0].message.content.strip()
+
+                # JSON検証
+                try:
+                    result = json.loads(result_text)
+
+                    # 必須フィールドの確認とデフォルト値設定
+                    if not isinstance(result.get("overview"), str):
+                        result["overview"] = ""
+                    if not isinstance(result.get("approach"), str):
+                        result["approach"] = ""
+                    if not isinstance(result.get("key_points"), list):
+                        result["key_points"] = []
+                    if not isinstance(result.get("results"), str):
+                        result["results"] = ""
+                    if not isinstance(result.get("techniques"), list):
+                        result["techniques"] = []
+
+                    return json.dumps(result, ensure_ascii=False)
+
+                except json.JSONDecodeError:
+                    if attempt < self.max_retries - 1:
+                        print(f"JSON解析エラー（リトライ {attempt + 1}/{self.max_retries}）")
+                        time.sleep(self.retry_delay)
+                        continue
+                    else:
+                        return "{}"
+
+            except Exception as e:
+                if attempt < self.max_retries - 1:
+                    print(f"構造化要約生成エラー（リトライ {attempt + 1}/{self.max_retries}）: {e}")
+                    time.sleep(self.retry_delay)
+                else:
+                    print(f"構造化要約生成エラー（最終試行失敗）: {e}")
+                    return "{}"
+
+        return "{}"
+
 
 # グローバルインスタンス（シングルトンパターン）
 _llm_service_instance = None

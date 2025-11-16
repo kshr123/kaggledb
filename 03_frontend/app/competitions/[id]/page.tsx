@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { Competition, DatasetInfo, StructuredSummary, Discussion, Solution } from '@/types/competition'
+import SolutionCard from './components/SolutionCard'
 
 type Tab = 'overview' | 'data' | 'discussion' | 'solutions'
 
@@ -741,6 +742,8 @@ function SolutionsTab({ competitionId }: { competitionId: string }) {
   const [solutions, setSolutions] = useState<Solution[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [fetching, setFetching] = useState(false)
+  const [enableAI, setEnableAI] = useState(false)
 
   useEffect(() => {
     async function fetchSolutions() {
@@ -765,6 +768,44 @@ function SolutionsTab({ competitionId }: { competitionId: string }) {
     fetchSolutions()
   }, [competitionId])
 
+  const handleFetchSolutions = async () => {
+    if (fetching) return
+
+    try {
+      setFetching(true)
+      setError(null)
+
+      const res = await fetch(
+        `http://localhost:8000/api/competitions/${competitionId}/solutions/fetch?enable_ai=${enableAI}`,
+        { method: 'POST' }
+      )
+
+      if (!res.ok) {
+        throw new Error('解法の収集に失敗しました')
+      }
+
+      const result = await res.json()
+
+      // 解法一覧を再取得
+      const solutionsRes = await fetch(`http://localhost:8000/api/competitions/${competitionId}/solutions`)
+      if (solutionsRes.ok) {
+        const data = await solutionsRes.json()
+        setSolutions(data)
+      }
+
+      alert(
+        `✅ 解法収集完了\n\n` +
+        `新規: ${result.saved}件\n` +
+        `更新: ${result.updated}件\n` +
+        `AI分析: ${result.ai_analyzed}件`
+      )
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '不明なエラーが発生しました')
+    } finally {
+      setFetching(false)
+    }
+  }
+
   if (loading) {
     return (
       <div className="flex justify-center items-center py-12">
@@ -784,101 +825,85 @@ function SolutionsTab({ competitionId }: { competitionId: string }) {
   if (solutions.length === 0) {
     return (
       <div className="text-center py-12">
-        <p className="text-slate-500">解法がまだ収集されていません</p>
-        <p className="text-sm text-slate-400 mt-2">
-          スクリプトを実行して解法を収集してください
-        </p>
+        <p className="text-slate-500 mb-4">解法がまだ収集されていません</p>
+
+        {/* 解法収集ボタン */}
+        <div className="flex flex-col items-center gap-4">
+          <div className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              id="enableAI"
+              checked={enableAI}
+              onChange={(e) => setEnableAI(e.target.checked)}
+              className="w-4 h-4 text-blue-600 rounded focus:ring-blue-500"
+            />
+            <label htmlFor="enableAI" className="text-sm text-slate-600">
+              AI分析を有効化（要約・技術抽出）
+            </label>
+          </div>
+
+          <button
+            onClick={handleFetchSolutions}
+            disabled={fetching}
+            className={`px-6 py-2 rounded-lg font-medium transition-colors ${
+              fetching
+                ? 'bg-slate-300 text-slate-500 cursor-not-allowed'
+                : 'bg-blue-600 text-white hover:bg-blue-700'
+            }`}
+          >
+            {fetching ? '収集中...' : '解法を取得'}
+          </button>
+
+          {enableAI && (
+            <p className="text-xs text-amber-600">
+              ⚠️ AI分析には時間がかかります（1件あたり数秒〜10秒）
+            </p>
+          )}
+        </div>
       </div>
     )
   }
 
   return (
     <div className="space-y-4">
-      {/* 解法一覧 */}
-      {solutions.map((solution) => (
-        <div
-          key={solution.id}
-          className="border border-slate-200 rounded-lg p-4 hover:border-blue-300 hover:bg-blue-50/30 transition-all"
-        >
-          <div className="flex items-start gap-3">
-            {/* メダルアイコン */}
-            {solution.medal && (
-              <div className="flex-shrink-0 mt-1">
-                {solution.medal === 'gold' && <span className="text-2xl">🥇</span>}
-                {solution.medal === 'silver' && <span className="text-2xl">🥈</span>}
-                {solution.medal === 'bronze' && <span className="text-2xl">🥉</span>}
-              </div>
-            )}
-
-            <div className="flex-1 min-w-0">
-              {/* タイトルとURL */}
-              <div className="mb-2">
-                <a
-                  href={solution.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-blue-600 hover:text-blue-800 font-medium hover:underline text-lg"
-                >
-                  {solution.title}
-                </a>
-              </div>
-
-              {/* メタ情報 */}
-              <div className="flex items-center gap-4 text-sm text-slate-600">
-                {/* 投稿者 */}
-                {solution.author && (
-                  <div className="flex items-center gap-2">
-                    {solution.tier_color && (
-                      <svg width="16" height="16" viewBox="0 0 16 16" className="flex-shrink-0">
-                        <circle
-                          r="6"
-                          cx="8"
-                          cy="8"
-                          fill="none"
-                          strokeWidth="2"
-                          style={{ stroke: solution.tier_color }}
-                        />
-                      </svg>
-                    )}
-                    <span>{solution.author}</span>
-                  </div>
-                )}
-
-                {/* 順位 */}
-                {solution.rank && (
-                  <div className="flex items-center gap-1">
-                    <span className="text-slate-500">#{solution.rank}</span>
-                  </div>
-                )}
-
-                {/* 投票数 */}
-                <div className="flex items-center gap-1">
-                  <span>👍</span>
-                  <span>{solution.vote_count}</span>
-                </div>
-
-                {/* コメント数 */}
-                <div className="flex items-center gap-1">
-                  <span>💬</span>
-                  <span>{solution.comment_count}</span>
-                </div>
-
-                {/* タイプ */}
-                <div className="text-xs px-2 py-1 bg-slate-100 rounded">
-                  {solution.type === 'notebook' ? '📓 Notebook' : '💬 Discussion'}
-                </div>
-              </div>
-
-              {/* 要約 */}
-              {solution.summary && (
-                <div className="mt-3 p-3 bg-slate-50 rounded text-sm text-slate-700">
-                  <p className="whitespace-pre-wrap">{solution.summary}</p>
-                </div>
-              )}
-            </div>
-          </div>
+      {/* 解法収集ボタン（上部） */}
+      <div className="flex items-center justify-between p-4 bg-slate-50 rounded-lg border border-slate-200">
+        <div className="flex items-center gap-3">
+          <input
+            type="checkbox"
+            id="enableAI-top"
+            checked={enableAI}
+            onChange={(e) => setEnableAI(e.target.checked)}
+            className="w-4 h-4 text-blue-600 rounded focus:ring-blue-500"
+          />
+          <label htmlFor="enableAI-top" className="text-sm text-slate-600">
+            AI分析を有効化（要約・技術抽出）
+          </label>
         </div>
-      ))}
+
+        <button
+          onClick={handleFetchSolutions}
+          disabled={fetching}
+          className={`px-4 py-2 rounded-lg font-medium text-sm transition-colors ${
+            fetching
+              ? 'bg-slate-300 text-slate-500 cursor-not-allowed'
+              : 'bg-blue-600 text-white hover:bg-blue-700'
+          }`}
+        >
+          {fetching ? '収集中...' : '解法を再取得'}
+        </button>
+      </div>
+
+      {/* 解法一覧 */}
+      <div className="space-y-3">
+        {solutions.map((solution) => (
+          <SolutionCard
+            key={solution.id}
+            solution={solution}
+            competitionId={competitionId}
+          />
+        ))}
+      </div>
     </div>
   )
 }
