@@ -272,10 +272,10 @@ export default function Home() {
 
                         {/* その他のタグ（タスクタイプ以外） */}
                         <div className="flex flex-wrap gap-2">
-                          {competition.tags.filter(tag =>
+                          {competition.tags?.filter(tag =>
                             !tag.includes('分類') && !tag.includes('回帰') && !tag.includes('物体検出') &&
                             !tag.includes('セグメンテーション') && !tag.includes('生成') && !tag.includes('ランキング')
-                          ).map((tag, idx) => (
+                          )?.map((tag, idx) => (
                             <span
                               key={idx}
                               className="inline-block px-3 py-1 text-xs font-semibold bg-slate-100 text-slate-700 rounded-md border border-slate-200 hover:bg-slate-200 hover:border-slate-300 transition-all"
