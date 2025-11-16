@@ -185,3 +185,233 @@ def get_competition_by_id(competition_id: str):
         item["data_types"] = json.loads(item["data_types"])
 
     return item
+
+
+@router.get("/competitions/{competition_id}/discussions")
+def get_competition_discussions(
+    competition_id: str,
+    sort_by: str = Query("vote_count", description="ソート項目（vote_count, comment_count, created_at）"),
+    order: str = Query("desc", description="ソート順（asc/desc）"),
+    limit: Optional[int] = Query(None, ge=1, description="取得件数の上限")
+):
+    """
+    コンペティションのディスカッション一覧を取得
+
+    Args:
+        competition_id: コンペID（slug）
+        sort_by: ソート項目（vote_count, comment_count, created_at）
+        order: ソート順（asc/desc）
+        limit: 取得件数の上限
+
+    Returns:
+        list: ディスカッション一覧
+    """
+    conn = sqlite3.connect(DATABASE_PATH)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+
+    # ソート順の検証と設定
+    order_sql = "ASC" if order.lower() == "asc" else "DESC"
+
+    # ピン留めを優先してソート
+    query = f"""
+        SELECT * FROM discussions
+        WHERE competition_id = ?
+        ORDER BY is_pinned DESC, {sort_by} {order_sql}
+    """
+
+    if limit:
+        query += f" LIMIT {limit}"
+
+    cursor.execute(query, (competition_id,))
+    rows = cursor.fetchall()
+    conn.close()
+
+    # JSON形式に変換
+    discussions = [dict(row) for row in rows]
+
+    return discussions
+
+
+@router.patch("/competitions/{competition_id}/favorite")
+def toggle_favorite(competition_id: str):
+    """
+    コンペティションのお気に入り状態を切り替える
+
+    お気に入りをOFFにする場合、そのコンペのディスカッションも削除される
+
+    Args:
+        competition_id: コンペID（slug）
+
+    Returns:
+        dict: 更新後のis_favorite状態と削除されたディスカッション数
+    """
+    conn = sqlite3.connect(DATABASE_PATH)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+
+    # 現在の状態を取得
+    cursor.execute("SELECT is_favorite FROM competitions WHERE id = ?", (competition_id,))
+    row = cursor.fetchone()
+
+    if not row:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Competition not found")
+
+    # 現在の状態を反転
+    current_state = row["is_favorite"]
+    new_state = 0 if current_state else 1
+
+    deleted_discussions = 0
+
+    # お気に入りをOFFにする場合、ディスカッションも削除
+    if new_state == 0:
+        # 削除数を取得
+        cursor.execute(
+            "SELECT COUNT(*) as count FROM discussions WHERE competition_id = ?",
+            (competition_id,)
+        )
+        deleted_discussions = cursor.fetchone()["count"]
+
+        # ディスカッションを削除
+        cursor.execute(
+            "DELETE FROM discussions WHERE competition_id = ?",
+            (competition_id,)
+        )
+
+    # お気に入り状態を更新
+    cursor.execute(
+        "UPDATE competitions SET is_favorite = ? WHERE id = ?",
+        (new_state, competition_id)
+    )
+    conn.commit()
+    conn.close()
+
+    return {
+        "is_favorite": bool(new_state),
+        "deleted_discussions": deleted_discussions
+    }
+
+
+@router.post("/competitions/{competition_id}/discussions/fetch")
+def fetch_discussions(competition_id: str):
+    """
+    コンペティションのディスカッションを取得してDBに保存
+
+    Args:
+        competition_id: コンペID（slug）
+
+    Returns:
+        dict: 取得結果（新規保存数、更新数、合計数）
+    """
+    from app.services.scraper_service import get_scraper_service
+
+    # コンペの存在確認
+    conn = sqlite3.connect(DATABASE_PATH)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT id FROM competitions WHERE id = ?", (competition_id,))
+    if not cursor.fetchone():
+        conn.close()
+        raise HTTPException(status_code=404, detail="Competition not found")
+
+    conn.close()
+
+    # スクレイピング実行
+    scraper = get_scraper_service()
+    discussions = scraper.get_discussions(
+        comp_id=competition_id,
+        max_pages=1,
+        force_refresh=True  # 常に最新を取得
+    )
+
+    if not discussions:
+        raise HTTPException(status_code=500, detail="Failed to fetch discussions")
+
+    # データベースに保存
+    conn = sqlite3.connect(DATABASE_PATH)
+    cursor = conn.cursor()
+
+    saved_count = 0
+    updated_count = 0
+
+    for disc in discussions:
+        # 既存のレコードをチェック
+        cursor.execute(
+            "SELECT id FROM discussions WHERE competition_id = ? AND url = ?",
+            (competition_id, disc['url'])
+        )
+        existing = cursor.fetchone()
+
+        now = datetime.now().isoformat()
+
+        if existing:
+            # 更新
+            cursor.execute("""
+                UPDATE discussions
+                SET title = ?,
+                    author = ?,
+                    author_tier = ?,
+                    tier_color = ?,
+                    vote_count = ?,
+                    comment_count = ?,
+                    category = ?,
+                    is_pinned = ?,
+                    updated_at = ?
+                WHERE id = ?
+            """, (
+                disc['title'],
+                disc['author'],
+                disc.get('author_tier'),
+                disc.get('tier_color'),
+                disc['vote_count'],
+                disc['comment_count'],
+                disc['category'],
+                disc['is_pinned'],
+                now,
+                existing[0]
+            ))
+            updated_count += 1
+        else:
+            # 新規作成
+            cursor.execute("""
+                INSERT INTO discussions (
+                    competition_id,
+                    title,
+                    author,
+                    author_tier,
+                    tier_color,
+                    url,
+                    vote_count,
+                    comment_count,
+                    category,
+                    is_pinned,
+                    created_at,
+                    updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                competition_id,
+                disc['title'],
+                disc['author'],
+                disc.get('author_tier'),
+                disc.get('tier_color'),
+                disc['url'],
+                disc['vote_count'],
+                disc['comment_count'],
+                disc['category'],
+                disc['is_pinned'],
+                now,
+                now
+            ))
+            saved_count += 1
+
+    conn.commit()
+    conn.close()
+
+    return {
+        "success": True,
+        "saved": saved_count,
+        "updated": updated_count,
+        "total": saved_count + updated_count
+    }
