@@ -7,27 +7,64 @@
 
 import sys
 import os
+import argparse
 
 # バックエンドディレクトリをパスに追加
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '02_backend'))
 
-from app.services.scraper_service import get_scraper_service
+from app.services.scraper_service import ScraperService
 
 
 def main():
+    parser = argparse.ArgumentParser(description="スクレイピング機能テスト")
+    parser.add_argument(
+        "--headless",
+        action="store_true",
+        default=True,
+        help="ヘッドレスモードで実行（デフォルト）"
+    )
+    parser.add_argument(
+        "--show-browser",
+        action="store_true",
+        help="ブラウザを表示して実行（--headless の逆）"
+    )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=3,
+        help="テストするコンペ数（デフォルト: 3）"
+    )
+    parser.add_argument(
+        "--cache-ttl",
+        type=int,
+        default=1,
+        help="キャッシュ有効期限（日数、デフォルト: 1）"
+    )
+
+    args = parser.parse_args()
+
+    # --show-browser が指定された場合は headless を False に
+    headless = not args.show_browser if args.show_browser else args.headless
+
     print("=" * 60)
     print("スクレイピング機能テスト")
     print("=" * 60)
+    print(f"モード: {'ヘッドレス' if headless else 'ブラウザ表示'}")
+    print(f"キャッシュTTL: {args.cache_ttl}日")
 
     # テスト対象のコンペティション
-    test_competitions = [
+    all_competitions = [
         'titanic',           # 定番・安定
         'house-prices',      # 定番・安定
         'digit-recognizer',  # 定番・安定
     ]
+    test_competitions = all_competitions[:args.limit]
 
     # スクレイピングサービス取得
-    scraper = get_scraper_service(cache_ttl_days=1)
+    if not headless:
+        print("\n⚠️  ブラウザウィンドウが表示されます...")
+
+    scraper = ScraperService(cache_ttl_days=args.cache_ttl, headless=headless)
 
     print(f"\n📋 テスト対象: {len(test_competitions)}件")
     print("-" * 60)
