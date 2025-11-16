@@ -55,7 +55,7 @@ uv.lock
 *.onnx
 *.pb
 *.tflite
-models/
+# models/  # コメントアウト: app/models/ は含める必要がある
 data/
 logs/
 mlruns/
