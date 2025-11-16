@@ -7,7 +7,7 @@ OpenAI GPT-4oを使用してコンペティション情報を分析し、
 
 import os
 import json
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Any
 from openai import OpenAI
 import time
 
@@ -107,6 +107,192 @@ class LLMService:
                     return ""
 
         return ""
+
+    def generate_metric_description(self, metric: str, description: str, title: str = "") -> str:
+        """
+        評価指標の説明を生成
+
+        Args:
+            metric: 評価指標の名前（例: "F1スコア", "AUC-ROC"）
+            description: コンペの説明文
+            title: コンペのタイトル
+
+        Returns:
+            評価指標の説明文（100-150文字程度）
+        """
+        if not metric or not description:
+            return ""
+
+        prompt = f"""あなたはKaggleコンペティションの分析専門家です。
+以下のコンペティションで使用される評価指標について、初心者にも分かりやすい説明を作成してください。
+
+【タイトル】
+{title}
+
+【評価指標】
+{metric}
+
+【説明文】
+{description}
+
+【タスク】
+この評価指標について、以下の内容を含む100-150文字程度の説明を日本語で作成してください：
+- 指標の意味
+- この指標が何を測定するか
+- なぜこのコンペでこの指標が使われるか
+
+【要件】
+- 専門用語は分かりやすく説明
+- 簡潔で明確な表現
+- 前置きや見出しは不要、説明文のみ
+- 100-150文字程度"""
+
+        for attempt in range(self.max_retries):
+            try:
+                response = self.client.chat.completions.create(
+                    model=self.model,
+                    messages=[
+                        {"role": "system", "content": "あなたはKaggleコンペティションの分析専門家です。"},
+                        {"role": "user", "content": prompt}
+                    ],
+                    temperature=0.3,
+                    max_tokens=300
+                )
+
+                description_text = response.choices[0].message.content.strip()
+
+                # 150文字以内に制限
+                if len(description_text) > 200:
+                    description_text = description_text[:197] + "..."
+
+                return description_text
+
+            except Exception as e:
+                if attempt < self.max_retries - 1:
+                    print(f"指標説明生成エラー（リトライ {attempt + 1}/{self.max_retries}）: {e}")
+                    time.sleep(self.retry_delay)
+                else:
+                    print(f"指標説明生成エラー（最終試行失敗）: {e}")
+                    return ""
+
+        return ""
+
+    def extract_dataset_info(self, data_text: str, title: str = "") -> Dict[str, Any]:
+        """
+        Data タブのテキストからデータセット情報を抽出
+
+        Args:
+            data_text: Data タブのテキスト
+            title: コンペのタイトル
+
+        Returns:
+            データセット情報の辞書
+            {
+                "files": ["train.csv", "test.csv", ...],
+                "total_size": "1.2 GB",
+                "description": "データの概要説明",
+                "features": ["特徴1", "特徴2", ...],
+                "columns": [{"name": "column1", "description": "説明1"}, ...]
+            }
+        """
+        if not data_text:
+            return {
+                "files": [],
+                "total_size": "",
+                "description": "",
+                "features": [],
+                "columns": []
+            }
+
+        prompt = f"""あなたはKaggleコンペティションのデータ分析専門家です。
+以下のDataタブの内容から、データセット情報を抽出してください。
+
+【タイトル】
+{title}
+
+【Data タブのテキスト】
+{data_text}
+
+【タスク】
+以下のJSON形式でデータセット情報を出力してください：
+
+{{
+  "files": ["ファイル名1", "ファイル名2", "ファイル名3"],
+  "total_size": "データセット全体のサイズ（例: 1.2 GB）",
+  "description": "データの概要を日本語で簡潔に（150-200文字程度）",
+  "features": ["主要な特徴量・カラム1", "特徴量2", "特徴量3"],
+  "columns": [
+    {{"name": "カラム名1", "description": "カラムの意味・内容"}},
+    {{"name": "カラム名2", "description": "カラムの意味・内容"}}
+  ]
+}}
+
+【要件】
+- files: データファイル名のリスト（主要なファイルのみ、最大10個）
+- total_size: データセット全体のサイズ（明記されている場合のみ）
+- description: データの内容を詳しく説明（150-200文字程度）
+- features: 主要な特徴量やカラム名のリスト（簡潔な名前のみ、最大15個）
+- columns: カラム名とその説明の配列（各カラムの意味を日本語で明記、重要なカラムのみ、最大20個）
+  - name: カラム名（英語のまま）
+  - description: カラムの意味・内容を日本語で（30-50文字程度）
+- テキストに明記されている情報のみ抽出
+- 不明な項目は空文字列または空配列を返す
+- JSON形式のみを出力"""
+
+        for attempt in range(self.max_retries):
+            try:
+                response = self.client.chat.completions.create(
+                    model=self.model,
+                    messages=[
+                        {"role": "system", "content": "あなたはKaggleコンペティションのデータ分析専門家です。JSON形式で回答してください。"},
+                        {"role": "user", "content": prompt}
+                    ],
+                    temperature=0.2,
+                    max_tokens=1500,
+                    response_format={"type": "json_object"}
+                )
+
+                result_text = response.choices[0].message.content.strip()
+                result = json.loads(result_text)
+
+                # 結果の検証とデフォルト値設定
+                if not isinstance(result.get("files"), list):
+                    result["files"] = []
+                if not isinstance(result.get("total_size"), str):
+                    result["total_size"] = ""
+                if not isinstance(result.get("description"), str):
+                    result["description"] = ""
+                if not isinstance(result.get("features"), list):
+                    result["features"] = []
+                if not isinstance(result.get("columns"), list):
+                    result["columns"] = []
+
+                return result
+
+            except json.JSONDecodeError as e:
+                if attempt < self.max_retries - 1:
+                    print(f"JSON解析エラー（リトライ {attempt + 1}/{self.max_retries}）: {e}")
+                    time.sleep(self.retry_delay)
+                else:
+                    print(f"JSON解析エラー（最終試行失敗）: {e}")
+                    return {
+                        "files": [],
+                        "total_size": "",
+                        "description": "",
+                        "features": []
+                    }
+            except Exception as e:
+                if attempt < self.max_retries - 1:
+                    print(f"データセット情報抽出エラー（リトライ {attempt + 1}/{self.max_retries}）: {e}")
+                    time.sleep(self.retry_delay)
+                else:
+                    print(f"データセット情報抽出エラー（最終試行失敗）: {e}")
+                    return {
+                        "files": [],
+                        "total_size": "",
+                        "description": "",
+                        "features": []
+                    }
 
     def generate_summary(self, description: str, title: str = "") -> str:
         """
@@ -343,14 +529,16 @@ JSON形式のみを出力してください。前置きや説明は不要です�
     def enrich_competition(
         self,
         competition: Dict,
-        available_tags: Optional[Dict[str, List[str]]] = None
+        available_tags: Optional[Dict[str, List[str]]] = None,
+        data_tab_text: Optional[str] = None
     ) -> Dict:
         """
-        コンペティション情報を充実化（要約とタグ生成）
+        コンペティション情報を充実化（要約、タグ、評価指標、データセット情報の生成）
 
         Args:
             competition: コンペティション情報の辞書
             available_tags: 利用可能なタグのマスタ
+            data_tab_text: Dataタブのテキスト（データセット情報抽出用）
 
         Returns:
             充実化されたコンペティション情報
@@ -363,6 +551,25 @@ JSON形式のみを出力してください。前置きや説明は不要です�
                 title=competition.get("title", "")
             )
             competition["summary"] = summary
+
+        # 評価指標抽出
+        if not competition.get("metric") and competition.get("description"):
+            print(f"評価指標抽出中: {competition.get('title', 'Unknown')}")
+            metric = self.extract_evaluation_metric(
+                description=competition.get("description", ""),
+                title=competition.get("title", "")
+            )
+            competition["metric"] = metric
+
+        # 評価指標の説明生成
+        if competition.get("metric") and not competition.get("metric_description") and competition.get("description"):
+            print(f"評価指標説明生成中: {competition.get('title', 'Unknown')}")
+            metric_description = self.generate_metric_description(
+                metric=competition.get("metric", ""),
+                description=competition.get("description", ""),
+                title=competition.get("title", "")
+            )
+            competition["metric_description"] = metric_description
 
         # タグ生成
         if (not competition.get("tags") or not competition.get("data_types")) and competition.get("description"):
@@ -381,7 +588,89 @@ JSON形式のみを出力してください。前置きや説明は不要です�
             if not competition.get("domain"):
                 competition["domain"] = tag_result.get("domain", "")
 
+        # データセット情報抽出
+        if data_tab_text and not competition.get("dataset_info"):
+            print(f"データセット情報抽出中: {competition.get('title', 'Unknown')}")
+            dataset_info = self.extract_dataset_info(
+                data_text=data_tab_text,
+                title=competition.get("title", "")
+            )
+            if dataset_info:
+                competition["dataset_info"] = json.dumps(dataset_info, ensure_ascii=False)
+
         return competition
+
+    def summarize_discussion(self, content: str, title: str = "") -> str:
+        """
+        ディスカッションの内容を要約
+
+        Args:
+            content: ディスカッションの本文
+            title: ディスカッションのタイトル
+
+        Returns:
+            要約文（150-200文字程度の日本語）
+        """
+        if not content:
+            return ""
+
+        # 長すぎる場合は最初の部分のみ使用（トークン制限対策）
+        max_content_length = 4000
+        if len(content) > max_content_length:
+            content = content[:max_content_length] + "..."
+
+        prompt = f"""あなたはKaggleディスカッションの要約専門家です。
+以下のディスカッションを読み、重要なポイントを簡潔に要約してください。
+
+【タイトル】
+{title}
+
+【本文】
+{content}
+
+【タスク】
+このディスカッションの内容を150-200文字程度の日本語で要約してください。
+
+【要件】
+- 主要なポイントや結論を含める
+- 技術的な内容は具体的に
+- 初心者にも分かりやすく
+- 箇条書きではなく文章で
+- 前置きや見出しは不要、要約文のみ
+- 150-200文字程度
+
+【出力例】
+このディスカッションでは、特徴量エンジニアリングの重要性について議論されています。特に、カテゴリ変数のエンコーディング手法と欠損値の扱い方に焦点が当てられており、Target Encodingを用いることでスコアが大幅に向上したという報告があります。また、外れ値の検出と除去についても詳しく説明されています。"""
+
+        for attempt in range(self.max_retries):
+            try:
+                response = self.client.chat.completions.create(
+                    model=self.model,
+                    messages=[
+                        {"role": "system", "content": "あなたはKaggleディスカッションの要約専門家です。"},
+                        {"role": "user", "content": prompt}
+                    ],
+                    temperature=0.3,
+                    max_tokens=400
+                )
+
+                summary = response.choices[0].message.content.strip()
+
+                # 250文字以内に制限
+                if len(summary) > 250:
+                    summary = summary[:247] + "..."
+
+                return summary
+
+            except Exception as e:
+                if attempt < self.max_retries - 1:
+                    print(f"ディスカッション要約エラー（リトライ {attempt + 1}/{self.max_retries}）: {e}")
+                    time.sleep(self.retry_delay)
+                else:
+                    print(f"ディスカッション要約エラー（最終試行失敗）: {e}")
+                    return ""
+
+        return ""
 
 
 # グローバルインスタンス（シングルトンパターン）
