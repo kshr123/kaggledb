@@ -228,6 +228,47 @@ class CompetitionRepository(BaseRepository):
             conn.commit()
             return cursor.rowcount > 0
 
+    def get_new_competitions(
+        self,
+        days: int = 30,
+        limit: Optional[int] = None
+    ) -> List[Competition]:
+        """
+        新規コンペを取得（created_at基準）
+
+        Args:
+            days: 過去N日以内
+            limit: 取得件数の上限
+
+        Returns:
+            List[Competition]: 新規コンペ一覧
+        """
+        from datetime import datetime, timedelta
+
+        with self.db.get_connection() as conn:
+            cursor = conn.cursor()
+
+            # N日前の日付を計算
+            cutoff_date = (datetime.now().date() - timedelta(days=days)).isoformat()
+
+            # SQL構築
+            query = """
+                SELECT * FROM competitions
+                WHERE created_at >= ?
+                ORDER BY created_at DESC
+            """
+
+            params = [cutoff_date]
+
+            if limit:
+                query += " LIMIT ?"
+                params.append(limit)
+
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
+
+            return [self._row_to_competition(row) for row in rows]
+
     def count(self, filters: Optional[Dict[str, Any]] = None) -> int:
         """
         コンペ数をカウント

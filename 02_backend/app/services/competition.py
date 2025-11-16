@@ -146,6 +146,23 @@ class CompetitionService:
 
         return results
 
+    def get_new_competitions(
+        self,
+        days: int = 30,
+        limit: Optional[int] = None
+    ) -> List[Competition]:
+        """
+        新規コンペを取得（created_at基準）
+
+        Args:
+            days: 過去N日以内（デフォルト30日）
+            limit: 取得件数の上限
+
+        Returns:
+            List[Competition]: 新規コンペ一覧
+        """
+        return self.repository.get_new_competitions(days=days, limit=limit)
+
     def toggle_favorite(self, comp_id: str) -> Competition:
         """
         お気に入りトグル

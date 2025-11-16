@@ -100,7 +100,8 @@ def get_competitions(
 @router.get("/competitions/new")
 def get_new_competitions(
     days: int = Query(30, ge=1, description="過去N日以内に追加されたコンペを取得"),
-    limit: Optional[int] = Query(None, ge=1, description="取得件数の上限")
+    limit: Optional[int] = Query(None, ge=1, description="取得件数の上限"),
+    service: Annotated[CompetitionService, Depends(get_competition_service)] = None
 ):
     """
     新規コンペを取得（created_at基準）
@@ -112,39 +113,10 @@ def get_new_competitions(
     Returns:
         list: 新規コンペ一覧
     """
-    conn = sqlite3.connect(DATABASE_PATH)
-    conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
+    # サービス層を使用して新規コンペを取得
+    competitions = service.get_new_competitions(days=days, limit=limit)
 
-    # N日前の日付を計算
-    cutoff_date = (datetime.now().date() - timedelta(days=days)).isoformat()
-
-    # SQL構築
-    query = """
-        SELECT * FROM competitions
-        WHERE created_at >= ?
-        ORDER BY created_at DESC
-    """
-
-    if limit:
-        query += f" LIMIT {limit}"
-
-    cursor.execute(query, (cutoff_date,))
-    rows = cursor.fetchall()
-    conn.close()
-
-    # JSON形式に変換
-    items = []
-    for row in rows:
-        item = dict(row)
-        import json
-        if item.get("tags"):
-            item["tags"] = json.loads(item["tags"])
-        if item.get("data_types"):
-            item["data_types"] = json.loads(item["data_types"])
-        items.append(item)
-
-    return items
+    return [comp.to_dict() for comp in competitions]
 
 
 @router.get("/competitions/{competition_id}")
