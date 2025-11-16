@@ -6,14 +6,25 @@ GET /api/competitions/{id} - コンペ詳細取得
 GET /api/competitions/new - 新規コンペ取得
 """
 
-from typing import Optional
-from fastapi import APIRouter, Query, HTTPException
+from typing import Optional, Annotated
+from fastapi import APIRouter, Query, HTTPException, Depends
 import sqlite3
 from app.config import DATABASE_PATH
 from datetime import datetime, timedelta
 import math
 
+from app.database import get_database, Database
+from app.repositories.competition import CompetitionRepository
+from app.services.competition import CompetitionService
+
 router = APIRouter()
+
+
+# 依存性注入
+def get_competition_service(db: Annotated[Database, Depends(get_database)]) -> CompetitionService:
+    """CompetitionServiceのインスタンスを取得（依存性注入用）"""
+    repository = CompetitionRepository(db)
+    return CompetitionService(repository)
 
 
 @router.get("/competitions")
@@ -152,7 +163,10 @@ def get_new_competitions(
 
 
 @router.get("/competitions/{competition_id}")
-def get_competition_by_id(competition_id: str):
+def get_competition_by_id(
+    competition_id: str,
+    service: Annotated[CompetitionService, Depends(get_competition_service)]
+):
     """
     コンペ詳細を取得
 
@@ -165,26 +179,12 @@ def get_competition_by_id(competition_id: str):
     Raises:
         HTTPException: コンペが見つからない場合は404
     """
-    conn = sqlite3.connect(DATABASE_PATH)
-    conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
+    competition = service.get_competition(competition_id)
 
-    cursor.execute("SELECT * FROM competitions WHERE id = ?", (competition_id,))
-    row = cursor.fetchone()
-    conn.close()
-
-    if not row:
+    if not competition:
         raise HTTPException(status_code=404, detail="Competition not found")
 
-    # JSON形式に変換
-    item = dict(row)
-    import json
-    if item.get("tags"):
-        item["tags"] = json.loads(item["tags"])
-    if item.get("data_types"):
-        item["data_types"] = json.loads(item["data_types"])
-
-    return item
+    return competition.to_dict()
 
 
 @router.get("/competitions/{competition_id}/discussions")
@@ -290,7 +290,10 @@ def get_competition_solutions(
 
 
 @router.patch("/competitions/{competition_id}/favorite")
-def toggle_favorite(competition_id: str):
+def toggle_favorite(
+    competition_id: str,
+    service: Annotated[CompetitionService, Depends(get_competition_service)]
+):
     """
     コンペティションのお気に入り状態を切り替える
 
@@ -302,49 +305,41 @@ def toggle_favorite(competition_id: str):
     Returns:
         dict: 更新後のis_favorite状態と削除されたディスカッション数
     """
-    conn = sqlite3.connect(DATABASE_PATH)
-    conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
-
     # 現在の状態を取得
-    cursor.execute("SELECT is_favorite FROM competitions WHERE id = ?", (competition_id,))
-    row = cursor.fetchone()
-
-    if not row:
-        conn.close()
+    competition = service.get_competition(competition_id)
+    if not competition:
         raise HTTPException(status_code=404, detail="Competition not found")
 
-    # 現在の状態を反転
-    current_state = row["is_favorite"]
-    new_state = 0 if current_state else 1
-
+    current_state = competition.is_favorite
     deleted_discussions = 0
 
     # お気に入りをOFFにする場合、ディスカッションも削除
-    if new_state == 0:
+    # TODO: この処理はDiscussionServiceに移動すべき
+    if current_state:  # 現在ONなので、これからOFFになる
+        conn = sqlite3.connect(DATABASE_PATH)
+        cursor = conn.cursor()
+
         # 削除数を取得
         cursor.execute(
             "SELECT COUNT(*) as count FROM discussions WHERE competition_id = ?",
             (competition_id,)
         )
-        deleted_discussions = cursor.fetchone()["count"]
+        result = cursor.fetchone()
+        deleted_discussions = result[0] if result else 0
 
         # ディスカッションを削除
         cursor.execute(
             "DELETE FROM discussions WHERE competition_id = ?",
             (competition_id,)
         )
+        conn.commit()
+        conn.close()
 
-    # お気に入り状態を更新
-    cursor.execute(
-        "UPDATE competitions SET is_favorite = ? WHERE id = ?",
-        (new_state, competition_id)
-    )
-    conn.commit()
-    conn.close()
+    # お気に入り状態を更新（サービス層を使用）
+    updated_competition = service.toggle_favorite(competition_id)
 
     return {
-        "is_favorite": bool(new_state),
+        "is_favorite": updated_competition.is_favorite,
         "deleted_discussions": deleted_discussions
     }
 
