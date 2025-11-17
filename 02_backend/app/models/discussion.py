@@ -22,6 +22,8 @@ class Discussion:
     # オプショナルフィールド
     author_tier: Optional[str] = None
     tier_color: Optional[str] = None
+    category: Optional[str] = None  # 'General Discussion', 'Getting Started', etc.
+    is_pinned: bool = False
     content: Optional[str] = None
     summary: Optional[str] = None
 

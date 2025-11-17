@@ -11,6 +11,8 @@ from app.database import Database
 from app.repositories.base import BaseRepository
 from app.repositories.competition import CompetitionRepository
 from app.models.competition import Competition
+from app.models.discussion import Discussion
+from app.models.solution import Solution
 
 
 @pytest.fixture
@@ -48,6 +50,48 @@ def test_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 last_scraped_at TIMESTAMP
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE discussions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                competition_id TEXT NOT NULL,
+                title TEXT NOT NULL,
+                author TEXT NOT NULL,
+                author_tier TEXT,
+                tier_color TEXT,
+                url TEXT NOT NULL,
+                vote_count INTEGER DEFAULT 0,
+                comment_count INTEGER DEFAULT 0,
+                category TEXT,
+                is_pinned BOOLEAN DEFAULT 0,
+                content TEXT,
+                summary TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (competition_id) REFERENCES competitions(id)
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE solutions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                competition_id TEXT NOT NULL,
+                title TEXT NOT NULL,
+                author TEXT NOT NULL,
+                author_tier TEXT,
+                tier_color TEXT,
+                url TEXT NOT NULL,
+                type TEXT DEFAULT 'discussion',
+                medal TEXT,
+                rank INTEGER,
+                vote_count INTEGER DEFAULT 0,
+                comment_count INTEGER DEFAULT 0,
+                content TEXT,
+                summary TEXT,
+                techniques TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (competition_id) REFERENCES competitions(id)
             )
         """)
         conn.commit()

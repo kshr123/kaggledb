@@ -27,6 +27,22 @@ def get_competition_service(db: Annotated[Database, Depends(get_database)]) -> C
     return CompetitionService(repository)
 
 
+def get_discussion_service(db: Annotated[Database, Depends(get_database)]) -> "DiscussionService":
+    """DiscussionServiceのインスタンスを取得（依存性注入用）"""
+    from app.repositories.discussion import DiscussionRepository
+    from app.services.discussion import DiscussionService
+    repository = DiscussionRepository(db)
+    return DiscussionService(repository)
+
+
+def get_solution_service(db: Annotated[Database, Depends(get_database)]) -> "SolutionService":
+    """SolutionServiceのインスタンスを取得（依存性注入用）"""
+    from app.repositories.solution import SolutionRepository
+    from app.services.solution import SolutionService
+    repository = SolutionRepository(db)
+    return SolutionService(repository)
+
+
 @router.get("/competitions")
 def get_competitions(
     page: int = Query(1, ge=1, description="ページ番号"),
@@ -149,7 +165,8 @@ def get_competition_discussions(
     competition_id: str,
     sort_by: str = Query("vote_count", description="ソート項目（vote_count, comment_count, created_at）"),
     order: str = Query("desc", description="ソート順（asc/desc）"),
-    limit: Optional[int] = Query(None, ge=1, description="取得件数の上限")
+    limit: Optional[int] = Query(None, ge=1, description="取得件数の上限"),
+    service: Annotated["DiscussionService", Depends(get_discussion_service)] = None
 ):
     """
     コンペティションのディスカッション一覧を取得
@@ -163,39 +180,23 @@ def get_competition_discussions(
     Returns:
         list: ディスカッション一覧
     """
-    conn = sqlite3.connect(DATABASE_PATH)
-    conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
+    discussions = service.get_discussions(
+        competition_id=competition_id,
+        sort_by=sort_by,
+        order=order,
+        limit=limit
+    )
 
-    # ソート順の検証と設定
-    order_sql = "ASC" if order.lower() == "asc" else "DESC"
-
-    # ピン留めを優先してソート
-    query = f"""
-        SELECT * FROM discussions
-        WHERE competition_id = ?
-        ORDER BY is_pinned DESC, {sort_by} {order_sql}
-    """
-
-    if limit:
-        query += f" LIMIT {limit}"
-
-    cursor.execute(query, (competition_id,))
-    rows = cursor.fetchall()
-    conn.close()
-
-    # JSON形式に変換
-    discussions = [dict(row) for row in rows]
-
-    return discussions
+    return [disc.to_dict() for disc in discussions]
 
 
 @router.get("/competitions/{competition_id}/solutions")
 def get_competition_solutions(
     competition_id: str,
     sort_by: str = Query("rank", description="ソート項目（rank, vote_count, created_at）"),
-    order: str = Query("asc", description="ソート順（asc/desc）"),
-    limit: Optional[int] = Query(None, ge=1, description="取得件数の上限")
+    order: str = Query("asc", description="ソート順（asc/desc）- rankの場合はascがデフォルト"),
+    limit: Optional[int] = Query(None, ge=1, description="取得件数の上限"),
+    service: Annotated["SolutionService", Depends(get_solution_service)] = None
 ):
     """
     コンペティションの解法一覧を取得
@@ -209,41 +210,14 @@ def get_competition_solutions(
     Returns:
         list: 解法一覧
     """
-    conn = sqlite3.connect(DATABASE_PATH)
-    conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
+    solutions = service.get_solutions(
+        competition_id=competition_id,
+        sort_by=sort_by,
+        order=order,
+        limit=limit
+    )
 
-    # ソート順の検証と設定
-    order_sql = "ASC" if order.lower() == "asc" else "DESC"
-
-    # rankがNULLのものは最後に表示
-    if sort_by == "rank":
-        query = f"""
-            SELECT * FROM solutions
-            WHERE competition_id = ?
-            ORDER BY
-                CASE WHEN rank IS NULL THEN 1 ELSE 0 END,
-                rank {order_sql},
-                vote_count DESC
-        """
-    else:
-        query = f"""
-            SELECT * FROM solutions
-            WHERE competition_id = ?
-            ORDER BY {sort_by} {order_sql}
-        """
-
-    if limit:
-        query += f" LIMIT {limit}"
-
-    cursor.execute(query, (competition_id,))
-    rows = cursor.fetchall()
-    conn.close()
-
-    # JSON形式に変換
-    solutions = [dict(row) for row in rows]
-
-    return solutions
+    return [sol.to_dict() for sol in solutions]
 
 
 @router.patch("/competitions/{competition_id}/favorite")
@@ -302,7 +276,11 @@ def toggle_favorite(
 
 
 @router.post("/competitions/{competition_id}/discussions/fetch")
-def fetch_discussions(competition_id: str):
+def fetch_discussions(
+    competition_id: str,
+    discussion_service: Annotated["DiscussionService", Depends(get_discussion_service)] = None,
+    competition_service: Annotated[CompetitionService, Depends(get_competition_service)] = None
+):
     """
     コンペティションのディスカッションを取得してDBに保存
 
@@ -315,16 +293,9 @@ def fetch_discussions(competition_id: str):
     from app.services.scraper_service import get_scraper_service
 
     # コンペの存在確認
-    conn = sqlite3.connect(DATABASE_PATH)
-    conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
-
-    cursor.execute("SELECT id FROM competitions WHERE id = ?", (competition_id,))
-    if not cursor.fetchone():
-        conn.close()
+    comp = competition_service.get_competition(competition_id)
+    if not comp:
         raise HTTPException(status_code=404, detail="Competition not found")
-
-    conn.close()
 
     # スクレイピング実行
     scraper = get_scraper_service()
@@ -337,96 +308,25 @@ def fetch_discussions(competition_id: str):
     if not discussions:
         raise HTTPException(status_code=500, detail="Failed to fetch discussions")
 
-    # データベースに保存
-    conn = sqlite3.connect(DATABASE_PATH)
-    cursor = conn.cursor()
-
-    saved_count = 0
-    updated_count = 0
-
-    for disc in discussions:
-        # 既存のレコードをチェック
-        cursor.execute(
-            "SELECT id FROM discussions WHERE competition_id = ? AND url = ?",
-            (competition_id, disc['url'])
-        )
-        existing = cursor.fetchone()
-
-        now = datetime.now().isoformat()
-
-        if existing:
-            # 更新
-            cursor.execute("""
-                UPDATE discussions
-                SET title = ?,
-                    author = ?,
-                    author_tier = ?,
-                    tier_color = ?,
-                    vote_count = ?,
-                    comment_count = ?,
-                    category = ?,
-                    is_pinned = ?,
-                    updated_at = ?
-                WHERE id = ?
-            """, (
-                disc['title'],
-                disc['author'],
-                disc.get('author_tier'),
-                disc.get('tier_color'),
-                disc['vote_count'],
-                disc['comment_count'],
-                disc['category'],
-                disc['is_pinned'],
-                now,
-                existing[0]
-            ))
-            updated_count += 1
-        else:
-            # 新規作成
-            cursor.execute("""
-                INSERT INTO discussions (
-                    competition_id,
-                    title,
-                    author,
-                    author_tier,
-                    tier_color,
-                    url,
-                    vote_count,
-                    comment_count,
-                    category,
-                    is_pinned,
-                    created_at,
-                    updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                competition_id,
-                disc['title'],
-                disc['author'],
-                disc.get('author_tier'),
-                disc.get('tier_color'),
-                disc['url'],
-                disc['vote_count'],
-                disc['comment_count'],
-                disc['category'],
-                disc['is_pinned'],
-                now,
-                now
-            ))
-            saved_count += 1
-
-    conn.commit()
-    conn.close()
+    # サービス層で保存
+    result = discussion_service.fetch_and_save_discussions(
+        competition_id=competition_id,
+        discussions_data=discussions
+    )
 
     return {
         "success": True,
-        "saved": saved_count,
-        "updated": updated_count,
-        "total": saved_count + updated_count
+        **result
     }
 
 
 @router.post("/competitions/{competition_id}/solutions/fetch")
-def fetch_solutions(competition_id: str, enable_ai: bool = False):
+def fetch_solutions(
+    competition_id: str,
+    enable_ai: bool = False,
+    solution_service: Annotated["SolutionService", Depends(get_solution_service)] = None,
+    competition_service: Annotated[CompetitionService, Depends(get_competition_service)] = None
+):
     """
     コンペティションの解法を取得してDBに保存
 
@@ -437,64 +337,13 @@ def fetch_solutions(competition_id: str, enable_ai: bool = False):
     Returns:
         dict: 取得結果（新規保存数、更新数、合計数、AI分析数）
     """
-    import sys
-    import os
-    import re
     from app.services.scraper_service import get_scraper_service
     from app.services.llm_service import get_llm_service
 
-    # ヘルパー関数
-    def clean_title(title: str, author: str | None = None) -> str:
-        """タイトルから余分な情報（投稿者、日付等）を除去"""
-        if ' · ' in title:
-            title = title.split(' · ')[0]
-        if 'Last comment' in title:
-            title = title.split('Last comment')[0]
-        if 'Posted' in title:
-            title = title.split('Posted')[0]
-        if author and title.endswith(author):
-            title = title[:-len(author)]
-        return title.strip()
-
-    def is_solution_discussion(title: str) -> tuple[bool, int | None]:
-        """タイトルから解法ディスカッションかどうかを判定"""
-        title_lower = title.lower()
-        solution_keywords = [
-            'solution', 'approach', 'write-up', 'writeup', '解法',
-            'our solution', 'my solution'
-        ]
-        rank_patterns = [
-            r'(\d+)(?:st|nd|rd|th)\s+place',
-            r'#(\d+)\s+solution',
-            r'rank\s+(\d+)',
-        ]
-
-        has_solution_keyword = any(keyword in title_lower for keyword in solution_keywords)
-
-        rank = None
-        for pattern in rank_patterns:
-            match = re.search(pattern, title_lower)
-            if match:
-                rank = int(match.group(1))
-                break
-
-        if rank:
-            return True, rank
-        if has_solution_keyword:
-            return True, None
-        return False, None
-
     # コンペの存在確認
-    conn = sqlite3.connect(DATABASE_PATH)
-    conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
-
-    cursor.execute("SELECT id FROM competitions WHERE id = ?", (competition_id,))
-    if not cursor.fetchone():
-        conn.close()
+    comp = competition_service.get_competition(competition_id)
+    if not comp:
         raise HTTPException(status_code=404, detail="Competition not found")
-
-    conn.close()
 
     # スクレイピング実行
     scraper = get_scraper_service()
@@ -507,182 +356,21 @@ def fetch_solutions(competition_id: str, enable_ai: bool = False):
     if not discussions:
         raise HTTPException(status_code=500, detail="Failed to fetch discussions")
 
-    # 解法をフィルター
-    solutions = []
-    for disc in discussions:
-        is_solution, rank = is_solution_discussion(disc['title'])
-        if is_solution:
-            clean_disc = disc.copy()
-            clean_disc['title'] = clean_title(disc['title'], disc.get('author'))
+    # AI分析用のサービスを準備
+    llm = get_llm_service() if enable_ai else None
 
-            solutions.append({
-                **clean_disc,
-                'rank': rank,
-                'type': 'discussion'
-            })
-
-    if not solutions:
-        return {
-            "success": True,
-            "saved": 0,
-            "updated": 0,
-            "total": 0,
-            "ai_analyzed": 0
-        }
-
-    # データベースに保存
-    conn = sqlite3.connect(DATABASE_PATH)
-    cursor = conn.cursor()
-
-    saved_count = 0
-    updated_count = 0
-
-    for sol in solutions:
-        # 既存チェック
-        cursor.execute(
-            "SELECT id FROM solutions WHERE competition_id = ? AND url = ?",
-            (competition_id, sol['url'])
-        )
-        existing = cursor.fetchone()
-
-        now = datetime.now().isoformat()
-
-        # メダル判定
-        medal = None
-        if sol['rank']:
-            if sol['rank'] == 1:
-                medal = 'gold'
-            elif sol['rank'] == 2:
-                medal = 'silver'
-            elif sol['rank'] == 3:
-                medal = 'bronze'
-
-        if existing:
-            # 更新
-            cursor.execute("""
-                UPDATE solutions
-                SET title = ?,
-                    author = ?,
-                    author_tier = ?,
-                    tier_color = ?,
-                    type = ?,
-                    medal = ?,
-                    rank = ?,
-                    vote_count = ?,
-                    comment_count = ?,
-                    updated_at = ?
-                WHERE id = ?
-            """, (
-                sol['title'],
-                sol.get('author'),
-                sol.get('author_tier'),
-                sol.get('tier_color'),
-                sol['type'],
-                medal,
-                sol['rank'],
-                sol['vote_count'],
-                sol['comment_count'],
-                now,
-                existing[0]
-            ))
-            updated_count += 1
-        else:
-            # 新規作成
-            cursor.execute("""
-                INSERT INTO solutions (
-                    competition_id,
-                    title,
-                    author,
-                    author_tier,
-                    tier_color,
-                    url,
-                    type,
-                    medal,
-                    rank,
-                    vote_count,
-                    comment_count,
-                    created_at,
-                    updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                competition_id,
-                sol['title'],
-                sol.get('author'),
-                sol.get('author_tier'),
-                sol.get('tier_color'),
-                sol['url'],
-                sol['type'],
-                medal,
-                sol['rank'],
-                sol['vote_count'],
-                sol['comment_count'],
-                now,
-                now
-            ))
-            saved_count += 1
-
-    conn.commit()
-    conn.close()
-
-    # AI分析
-    analyzed_count = 0
-    if enable_ai and solutions:
-        llm = get_llm_service()
-
-        conn = sqlite3.connect(DATABASE_PATH)
-        cursor = conn.cursor()
-
-        for sol in solutions:
-            # 既にsummaryとtechniquesがある場合はスキップ
-            cursor.execute(
-                "SELECT summary, techniques FROM solutions WHERE competition_id = ? AND url = ?",
-                (competition_id, sol['url'])
-            )
-            existing = cursor.fetchone()
-
-            if existing and existing[0] and existing[1]:
-                continue
-
-            # 解法の詳細を取得
-            detail = scraper.get_discussion_detail(sol['url'])
-
-            if not detail or not detail.get('content'):
-                continue
-
-            content = detail['content']
-
-            # 要約生成
-            summary = llm.summarize_discussion(content, sol['title'])
-
-            # 技術抽出
-            techniques_json = llm.extract_solution_techniques(content, sol['title'])
-
-            # データベース更新（contentは保存しない）
-            cursor.execute("""
-                UPDATE solutions
-                SET summary = ?,
-                    techniques = ?,
-                    updated_at = ?
-                WHERE competition_id = ? AND url = ?
-            """, (
-                summary,
-                techniques_json,
-                datetime.now().isoformat(),
-                competition_id,
-                sol['url']
-            ))
-
-            analyzed_count += 1
-
-        conn.commit()
-        conn.close()
+    # サービス層で解法の抽出・保存・AI分析
+    result = solution_service.fetch_and_save_solutions(
+        competition_id=competition_id,
+        discussions_data=discussions,
+        enable_ai=enable_ai,
+        scraper_service=scraper,
+        llm_service=llm
+    )
 
     return {
         "success": True,
-        "saved": saved_count,
-        "updated": updated_count,
-        "total": saved_count + updated_count,
-        "ai_analyzed": analyzed_count
+        **result
     }
 
 
