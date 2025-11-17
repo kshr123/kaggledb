@@ -18,23 +18,30 @@ class KaggleClient:
         self.api = KaggleApi()
         self.api.authenticate()
 
-    def get_competitions(self, page: int = 1, search: str = "") -> List[Dict]:
+    def get_competitions(
+        self,
+        page: int = 1,
+        search: str = "",
+        category: str = None
+    ) -> List[Dict]:
         """
         コンペティション一覧を取得
 
         Args:
             page: ページ番号
             search: 検索キーワード
+            category: カテゴリ（"featured", "research", "playground", "gettingStarted"）
 
         Returns:
             コンペティション情報のリスト
         """
         try:
             # Kaggle APIからコンペ一覧を取得
-            competitions = self.api.competitions_list(
-                page=page,
-                search=search
-            )
+            params = {"page": page, "search": search}
+            if category:
+                params["category"] = category
+
+            competitions = self.api.competitions_list(**params)
 
             result = []
             for comp in competitions:
