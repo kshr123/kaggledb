@@ -7,6 +7,7 @@ import { fetcher, buildApiUrl } from '@/lib/api'
 import type { CompetitionListResponse, StructuredSummary, DatasetInfo } from '@/types/competition'
 import type { TagsByCategory } from '@/types/tag'
 import { METRIC_GROUPS, DATA_TYPES, SORT_OPTIONS } from '@/lib/filter-constants'
+import { METRIC_DESCRIPTIONS } from '@/lib/metric-descriptions'
 import type { MetricCategory, MetricSubCategory } from '@/lib/filter-constants'
 
 export default function Home() {
@@ -48,6 +49,10 @@ export default function Home() {
       ...(search && { search }),
       ...(selectedMetrics.length > 0 && { metrics: selectedMetrics }),
       ...(selectedDataTypes.length > 0 && { data_types: selectedDataTypes }),
+      // selectedTagsを平坦化してtagsパラメータに渡す
+      ...(Object.values(selectedTags).flat().length > 0 && {
+        tags: Object.values(selectedTags).flat()
+      }),
       ...(isFavorite !== null && { is_favorite: isFavorite }),
       sort_by: sortBy,
       order,
@@ -428,6 +433,7 @@ export default function Home() {
                                         <label
                                           key={metric}
                                           className="flex items-center cursor-pointer hover:bg-blue-50 px-2 py-1 rounded transition-colors"
+                                          title={METRIC_DESCRIPTIONS[metric] || metric}
                                         >
                                           <input
                                             type="checkbox"
@@ -491,9 +497,9 @@ export default function Home() {
                 </div>
               </div>
 
-              {/* タグカテゴリー（モデル種別を除外） */}
+              {/* タグカテゴリー（モデル種別、データ種別、タスク種別を除外） */}
               {tagsData && Object.entries(tagsData)
-                .filter(([category]) => category !== 'model_type')
+                .filter(([category]) => !['model_type', 'data_type', 'task_type'].includes(category))
                 .map(([category, tags]) => (
                   <div key={category}>
                     <div className="flex items-center justify-between mb-2.5">
@@ -666,8 +672,12 @@ export default function Home() {
                               {competition.domain}
                             </span>
                             <span className="flex items-center gap-1.5">
-                              <span className="text-blue-600">📅</span>
-                              {new Date(competition.end_date).toLocaleDateString('ja-JP')}
+                              <span className="text-green-600">🚀</span>
+                              開始: {new Date(competition.created_at).toLocaleDateString('ja-JP')}
+                            </span>
+                            <span className="flex items-center gap-1.5">
+                              <span className="text-red-600">🏁</span>
+                              終了: {new Date(competition.deadline).toLocaleDateString('ja-JP')}
                             </span>
                           </div>
 
