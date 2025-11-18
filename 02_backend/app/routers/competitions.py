@@ -6,7 +6,7 @@ GET /api/competitions/{id} - コンペ詳細取得
 GET /api/competitions/new - 新規コンペ取得
 """
 
-from typing import Optional, Annotated
+from typing import Optional, Annotated, List
 from fastapi import APIRouter, Query, HTTPException, Depends
 import sqlite3
 from app.config import DATABASE_PATH
@@ -48,6 +48,11 @@ def get_competitions(
     page: int = Query(1, ge=1, description="ページ番号"),
     limit: int = Query(20, ge=1, le=100, description="1ページあたりの件数"),
     status: Optional[str] = Query(None, description="ステータスフィルタ（active/completed）"),
+    domain: Optional[str] = Query(None, description="ドメインフィルタ"),
+    metrics: Optional[List[str]] = Query(None, description="評価指標フィルタ（複数可）"),
+    data_types: Optional[List[str]] = Query(None, description="データタイプフィルタ（複数可）"),
+    tags: Optional[List[str]] = Query(None, description="タグフィルタ（複数可）"),
+    is_favorite: Optional[bool] = Query(None, description="お気に入りフィルタ"),
     search: Optional[str] = Query(None, description="タイトル検索"),
     sort_by: str = Query("created_at", description="ソート項目"),
     order: str = Query("desc", description="ソート順（asc/desc）"),
@@ -60,6 +65,10 @@ def get_competitions(
         page: ページ番号（1始まり）
         limit: 1ページあたりの件数（最大100）
         status: ステータスフィルタ（active/completed）
+        domain: ドメインフィルタ
+        metrics: 評価指標フィルタ（複数選択可能）
+        data_types: データタイプフィルタ（複数選択可能）
+        tags: タグフィルタ（複数選択可能）
         search: タイトル検索（部分一致）
         sort_by: ソート項目（created_at, end_date など）
         order: ソート順（asc/desc）
@@ -71,6 +80,16 @@ def get_competitions(
     filters = {}
     if status:
         filters["status"] = status
+    if domain:
+        filters["domain"] = domain
+    if metrics:
+        filters["metrics"] = metrics  # 複数のメトリックをリストで渡す
+    if data_types:
+        filters["data_types"] = data_types  # 複数のデータタイプをリストで渡す
+    if tags:
+        filters["tags"] = tags  # 複数のタグをリストで渡す
+    if is_favorite is not None:
+        filters["is_favorite"] = is_favorite  # お気に入りフィルタ
 
     # ページネーション用のオフセット計算
     offset = (page - 1) * limit
@@ -101,12 +120,18 @@ def get_competitions(
         )
         total = len(all_items)
 
+    # ステータス別の統計情報を取得（全件対象）
+    active_count = service.count_competitions(filters={"status": "active"})
+    completed_count = service.count_competitions(filters={"status": "completed"})
+
     # ページネーション情報
     total_pages = math.ceil(total / limit) if total > 0 else 0
 
     return {
         "items": [item.to_dict() for item in items],
         "total": total,
+        "active_count": active_count,
+        "completed_count": completed_count,
         "page": page,
         "limit": limit,
         "total_pages": total_pages

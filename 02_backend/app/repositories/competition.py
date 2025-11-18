@@ -121,8 +121,14 @@ class CompetitionRepository(BaseRepository):
             params = []
 
             for key, value in filters.items():
-                where_clauses.append(f"{key} = ?")
-                params.append(value)
+                if key in ["metrics", "data_types", "tags"] and isinstance(value, list):
+                    # 複数選択（OR検索）の場合はIN句を使用
+                    placeholders = ",".join(["?" for _ in value])
+                    where_clauses.append(f"{key.rstrip('s') if key.endswith('s') else key} IN ({placeholders})")
+                    params.extend(value)
+                else:
+                    where_clauses.append(f"{key} = ?")
+                    params.append(value)
 
             where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
 
@@ -284,13 +290,19 @@ class CompetitionRepository(BaseRepository):
         with self.db.get_connection() as conn:
             cursor = conn.cursor()
 
-            # フィルター条件を構築
+            # フィルター条件を構築（listメソッドと同じロジック）
             where_clauses = []
             params = []
 
             for key, value in filters.items():
-                where_clauses.append(f"{key} = ?")
-                params.append(value)
+                if key in ["metrics", "data_types", "tags"] and isinstance(value, list):
+                    # 複数選択（OR検索）の場合はIN句を使用
+                    placeholders = ",".join(["?" for _ in value])
+                    where_clauses.append(f"{key.rstrip('s') if key.endswith('s') else key} IN ({placeholders})")
+                    params.extend(value)
+                else:
+                    where_clauses.append(f"{key} = ?")
+                    params.append(value)
 
             where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
 
