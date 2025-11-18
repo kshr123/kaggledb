@@ -103,32 +103,32 @@ export const METRIC_GROUPS = {
 } as const
 
 /**
- * データタイプの定義
+ * データタイプの定義（英語値と日本語表示）
  */
 export const DATA_TYPES = [
-  'Tabular',
-  'Image',
-  'Text',
-  'Time Series',
-  'Audio',
-  'Video',
-  '3D',
-  'Graph',
-  'Geospatial',
-  'Code',
-  'Structured',
-  'Unstructured',
-  'Mixed',
-] as const
+  { value: 'Tabular', label: 'テーブル' },
+  { value: 'Image', label: '画像' },
+  { value: 'Text', label: 'テキスト' },
+  { value: 'Time Series', label: '時系列' },
+  { value: 'Audio', label: '音声' },
+  { value: 'Video', label: '動画' },
+  { value: '3D', label: '3D' },
+  { value: 'Graph', label: 'グラフ' },
+  { value: 'Geospatial', label: '地理空間' },
+  { value: 'Code', label: 'コード' },
+  { value: 'Structured', label: '構造化' },
+  { value: 'Unstructured', label: '非構造化' },
+  { value: 'Mixed', label: '混合' },
+]
 
 /**
  * 並び替え項目の定義
  */
 export const SORT_OPTIONS = [
-  { value: 'created_at', label: '新着順（開始日）', order: 'desc' },
-  { value: 'deadline', label: '終了日が近い順', order: 'asc' },
-  { value: 'created_at_asc', label: '開始日が古い順', order: 'asc' },
-] as const
+  { value: 'created_at', label: '新着順（開始日）', order: 'desc' as const },
+  { value: 'deadline', label: '終了日が近い順', order: 'asc' as const },
+  { value: 'created_at_asc', label: '開始日が古い順', order: 'asc' as const },
+]
 
 /**
  * 型定義
@@ -137,5 +137,6 @@ export type MetricCategory = keyof typeof METRIC_GROUPS
 export type MetricSubCategory<T extends MetricCategory> = keyof typeof METRIC_GROUPS[T]
 export type MetricName = string
 
-export type DataType = (typeof DATA_TYPES)[number]
-export type SortOption = (typeof SORT_OPTIONS)[number]
+export type DataType = string
+export type SortValue = 'created_at' | 'deadline' | 'created_at_asc'
+export type SortOrder = 'asc' | 'desc'

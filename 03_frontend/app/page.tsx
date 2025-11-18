@@ -33,6 +33,12 @@ export default function Home() {
     fetcher
   )
 
+  // Fetch total statistics (without filters)
+  const { data: totalStatsData } = useSWR<CompetitionListResponse>(
+    buildApiUrl('/api/competitions', { limit: 1 }),
+    fetcher
+  )
+
   // Fetch competitions with all filters
   const { data: competitionsData, error, isLoading } = useSWR<CompetitionListResponse>(
     buildApiUrl('/api/competitions', {
@@ -72,6 +78,65 @@ export default function Home() {
         ? prev.filter((m) => m !== metricName)
         : [...prev, metricName]
     )
+    setPage(1)
+  }
+
+  // カテゴリ内の全指標を取得
+  const getAllMetricsInCategory = (category: string): string[] => {
+    const subCategories = METRIC_GROUPS[category as MetricCategory]
+    const allMetrics: string[] = []
+    Object.values(subCategories).forEach((metrics) => {
+      allMetrics.push(...metrics)
+    })
+    return allMetrics
+  }
+
+  // サブカテゴリ内の全指標を取得
+  const getAllMetricsInSubCategory = (category: string, subCategory: string): string[] => {
+    return METRIC_GROUPS[category as MetricCategory][subCategory as any] || []
+  }
+
+  // カテゴリ全選択のトグル
+  const handleCategorySelectAll = (category: string) => {
+    const allMetrics = getAllMetricsInCategory(category)
+    const allSelected = allMetrics.every((m) => selectedMetrics.includes(m))
+
+    if (allSelected) {
+      // 全て選択されている場合は解除
+      setSelectedMetrics((prev) => prev.filter((m) => !allMetrics.includes(m)))
+    } else {
+      // 一部または全て未選択の場合は全選択
+      setSelectedMetrics((prev) => {
+        const newMetrics = [...prev]
+        allMetrics.forEach((m) => {
+          if (!newMetrics.includes(m)) {
+            newMetrics.push(m)
+          }
+        })
+        return newMetrics
+      })
+    }
+    setPage(1)
+  }
+
+  // サブカテゴリ全選択のトグル
+  const handleSubCategorySelectAll = (category: string, subCategory: string) => {
+    const allMetrics = getAllMetricsInSubCategory(category, subCategory)
+    const allSelected = allMetrics.every((m) => selectedMetrics.includes(m))
+
+    if (allSelected) {
+      setSelectedMetrics((prev) => prev.filter((m) => !allMetrics.includes(m)))
+    } else {
+      setSelectedMetrics((prev) => {
+        const newMetrics = [...prev]
+        allMetrics.forEach((m) => {
+          if (!newMetrics.includes(m)) {
+            newMetrics.push(m)
+          }
+        })
+        return newMetrics
+      })
+    }
     setPage(1)
   }
 
@@ -185,6 +250,13 @@ export default function Home() {
     return pages
   }
 
+  // 全体統計から開催中の数を計算
+  const getActiveCount = () => {
+    if (!totalStatsData) return 0
+    // ここでは簡易的に取得。実際はバックエンドで status=active の count を取得する方が良い
+    return totalStatsData.items.filter(c => c.status === 'active').length
+  }
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-gray-50 to-slate-100">
       {/* Header Stats Bar */}
@@ -195,23 +267,17 @@ export default function Home() {
               <h1 className="text-2xl font-semibold text-slate-900 tracking-tight">Kaggle Competition Database</h1>
               <p className="text-sm text-slate-500 mt-1">コンペティション分析ダッシュボード</p>
             </div>
-            {competitionsData && (
+            {totalStatsData && (
               <div className="flex items-center gap-4">
                 <div className="text-center px-5 py-2.5 bg-slate-50/50 rounded-xl border border-slate-200/60">
-                  <div className="text-xl font-semibold text-slate-900">{competitionsData.total}</div>
+                  <div className="text-xl font-semibold text-slate-900">{totalStatsData.total}</div>
                   <div className="text-xs text-slate-500 font-medium mt-0.5">総コンペ数</div>
                 </div>
                 <div className="text-center px-5 py-2.5 bg-gradient-to-br from-emerald-50 to-teal-50 rounded-xl border border-emerald-200/60">
                   <div className="text-xl font-semibold text-emerald-700">
-                    {competitionsData.items.filter(c => c.status === 'active').length}
+                    {getActiveCount()}
                   </div>
                   <div className="text-xs text-emerald-600 font-medium mt-0.5">開催中</div>
-                </div>
-                <div className="text-center px-5 py-2.5 bg-slate-50/50 rounded-xl border border-slate-200/60">
-                  <div className="text-xl font-semibold text-slate-700">
-                    {competitionsData.items.filter(c => c.status === 'completed').length}
-                  </div>
-                  <div className="text-xs text-slate-600 font-medium">終了済み</div>
                 </div>
               </div>
             )}
@@ -258,65 +324,6 @@ export default function Home() {
                 </div>
               </div>
 
-              {/* 並び替え */}
-              <div>
-                <label className="block text-sm font-semibold text-slate-700 mb-2.5">
-                  🔄 並び替え
-                </label>
-                <select
-                  value={sortBy}
-                  onChange={(e) => handleSortChange(e.target.value)}
-                  className="w-full px-4 py-2.5 text-sm border-2 border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all bg-slate-50 hover:bg-white cursor-pointer font-medium"
-                >
-                  {SORT_OPTIONS.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              {/* ステータスフィルター */}
-              <div>
-                <label className="block text-sm font-semibold text-slate-700 mb-2.5">
-                  📊 ステータス
-                </label>
-                <select
-                  value={status}
-                  onChange={(e) => {
-                    setStatus(e.target.value)
-                    setPage(1)
-                  }}
-                  className="w-full px-4 py-2.5 text-sm border-2 border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all bg-slate-50 hover:bg-white cursor-pointer font-medium"
-                >
-                  <option value="all">すべて</option>
-                  <option value="active">🟢 開催中</option>
-                  <option value="completed">🔴 終了済み</option>
-                </select>
-              </div>
-
-              {/* お気に入りフィルター */}
-              <div>
-                <div className="flex items-center justify-between mb-2.5">
-                  <label className="block text-sm font-semibold text-slate-700">
-                    ⭐ お気に入り
-                  </label>
-                </div>
-                <button
-                  onClick={() => {
-                    setIsFavorite(isFavorite === true ? null : true)
-                    setPage(1)
-                  }}
-                  className={`w-full px-4 py-2.5 text-sm font-medium rounded-lg transition-all border-2 ${
-                    isFavorite === true
-                      ? 'bg-yellow-50 text-yellow-700 border-yellow-300'
-                      : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
-                  }`}
-                >
-                  {isFavorite === true ? '⭐ お気に入りのみ表示' : 'お気に入りで絞り込む'}
-                </button>
-              </div>
-
               {/* 評価指標フィルター（3階層） */}
               <div>
                 <div className="flex items-center justify-between mb-2.5">
@@ -338,73 +345,109 @@ export default function Home() {
                   </div>
                 )}
                 <div className="space-y-1">
-                  {Object.entries(METRIC_GROUPS).map(([category, subCategories]) => (
-                    <div key={category} className="border border-slate-200 rounded-lg overflow-hidden">
-                      {/* カテゴリー */}
-                      <button
-                        onClick={() => toggleMetricCategory(category)}
-                        className="w-full px-3 py-2 flex items-center justify-between bg-slate-50 hover:bg-slate-100 transition-colors"
-                      >
-                        <span className="text-sm font-semibold text-slate-700">{category}</span>
-                        <svg
-                          className={`w-4 h-4 text-slate-400 transition-transform ${
-                            expandedMetricCategories.has(category) ? 'rotate-180' : ''
-                          }`}
-                          fill="none"
-                          stroke="currentColor"
-                          viewBox="0 0 24 24"
-                        >
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                        </svg>
-                      </button>
+                  {Object.entries(METRIC_GROUPS).map(([category, subCategories]) => {
+                    const allMetricsInCategory = getAllMetricsInCategory(category)
+                    const allSelected = allMetricsInCategory.every((m) => selectedMetrics.includes(m))
+                    const someSelected = allMetricsInCategory.some((m) => selectedMetrics.includes(m))
 
-                      {/* サブカテゴリー */}
-                      {expandedMetricCategories.has(category) && (
-                        <div className="bg-white">
-                          {Object.entries(subCategories).map(([subCategory, metrics]) => (
-                            <div key={subCategory} className="border-t border-slate-100">
-                              <button
-                                onClick={() => toggleMetricSubCategory(`${category}-${subCategory}`)}
-                                className="w-full px-4 py-1.5 flex items-center justify-between hover:bg-slate-50 transition-colors"
+                    return (
+                      <div key={category} className="border border-slate-200 rounded-lg overflow-hidden">
+                        {/* カテゴリー */}
+                        <div className="bg-slate-50">
+                          <div className="flex items-center px-3 py-2">
+                            <input
+                              type="checkbox"
+                              checked={allSelected}
+                              ref={(el) => {
+                                if (el) el.indeterminate = someSelected && !allSelected
+                              }}
+                              onChange={() => handleCategorySelectAll(category)}
+                              className="w-4 h-4 text-blue-600 border-slate-300 rounded focus:ring-2 focus:ring-blue-500"
+                            />
+                            <button
+                              onClick={() => toggleMetricCategory(category)}
+                              className="flex-1 flex items-center justify-between ml-2 hover:bg-slate-100 rounded px-2 py-1 transition-colors"
+                            >
+                              <span className="text-sm font-semibold text-slate-700">{category}</span>
+                              <svg
+                                className={`w-4 h-4 text-slate-400 transition-transform ${
+                                  expandedMetricCategories.has(category) ? 'rotate-180' : ''
+                                }`}
+                                fill="none"
+                                stroke="currentColor"
+                                viewBox="0 0 24 24"
                               >
-                                <span className="text-xs font-medium text-slate-600">{subCategory}</span>
-                                <svg
-                                  className={`w-3 h-3 text-slate-400 transition-transform ${
-                                    expandedMetricSubCategories.has(`${category}-${subCategory}`) ? 'rotate-180' : ''
-                                  }`}
-                                  fill="none"
-                                  stroke="currentColor"
-                                  viewBox="0 0 24 24"
-                                >
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                                </svg>
-                              </button>
-
-                              {/* 指標リスト */}
-                              {expandedMetricSubCategories.has(`${category}-${subCategory}`) && (
-                                <div className="px-4 pb-2 space-y-1">
-                                  {metrics.map((metric) => (
-                                    <label
-                                      key={metric}
-                                      className="flex items-center cursor-pointer hover:bg-blue-50 px-2 py-1 rounded transition-colors"
-                                    >
-                                      <input
-                                        type="checkbox"
-                                        checked={selectedMetrics.includes(metric)}
-                                        onChange={() => handleMetricToggle(metric)}
-                                        className="w-3 h-3 text-blue-600 border-slate-300 rounded focus:ring-2 focus:ring-blue-500"
-                                      />
-                                      <span className="ml-2 text-xs text-slate-700">{metric}</span>
-                                    </label>
-                                  ))}
-                                </div>
-                              )}
-                            </div>
-                          ))}
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                              </svg>
+                            </button>
+                          </div>
                         </div>
-                      )}
-                    </div>
-                  ))}
+
+                        {/* サブカテゴリー */}
+                        {expandedMetricCategories.has(category) && (
+                          <div className="bg-white">
+                            {Object.entries(subCategories).map(([subCategory, metrics]) => {
+                              const allMetricsInSub = metrics as readonly string[]
+                              const allSubSelected = allMetricsInSub.every((m) => selectedMetrics.includes(m))
+                              const someSubSelected = allMetricsInSub.some((m) => selectedMetrics.includes(m))
+
+                              return (
+                                <div key={subCategory} className="border-t border-slate-100">
+                                  <div className="flex items-center px-4 py-1.5">
+                                    <input
+                                      type="checkbox"
+                                      checked={allSubSelected}
+                                      ref={(el) => {
+                                        if (el) el.indeterminate = someSubSelected && !allSubSelected
+                                      }}
+                                      onChange={() => handleSubCategorySelectAll(category, subCategory)}
+                                      className="w-3 h-3 text-blue-600 border-slate-300 rounded focus:ring-2 focus:ring-blue-500"
+                                    />
+                                    <button
+                                      onClick={() => toggleMetricSubCategory(`${category}-${subCategory}`)}
+                                      className="flex-1 flex items-center justify-between ml-2 hover:bg-slate-50 rounded px-2 py-1 transition-colors"
+                                    >
+                                      <span className="text-xs font-medium text-slate-600">{subCategory}</span>
+                                      <svg
+                                        className={`w-3 h-3 text-slate-400 transition-transform ${
+                                          expandedMetricSubCategories.has(`${category}-${subCategory}`) ? 'rotate-180' : ''
+                                        }`}
+                                        fill="none"
+                                        stroke="currentColor"
+                                        viewBox="0 0 24 24"
+                                      >
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                                      </svg>
+                                    </button>
+                                  </div>
+
+                                  {/* 指標リスト */}
+                                  {expandedMetricSubCategories.has(`${category}-${subCategory}`) && (
+                                    <div className="px-4 pb-2 space-y-1">
+                                      {metrics.map((metric) => (
+                                        <label
+                                          key={metric}
+                                          className="flex items-center cursor-pointer hover:bg-blue-50 px-2 py-1 rounded transition-colors"
+                                        >
+                                          <input
+                                            type="checkbox"
+                                            checked={selectedMetrics.includes(metric)}
+                                            onChange={() => handleMetricToggle(metric)}
+                                            className="w-3 h-3 text-blue-600 border-slate-300 rounded focus:ring-2 focus:ring-blue-500"
+                                          />
+                                          <span className="ml-2 text-xs text-slate-700">{metric}</span>
+                                        </label>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+                              )
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })}
                 </div>
               </div>
 
@@ -431,56 +474,58 @@ export default function Home() {
                 <div className="space-y-1.5 max-h-48 overflow-y-auto">
                   {DATA_TYPES.map((dataType) => (
                     <label
-                      key={dataType}
+                      key={dataType.value}
                       className="flex items-center cursor-pointer hover:bg-blue-50 px-3 py-2 rounded-lg transition-colors group"
                     >
                       <input
                         type="checkbox"
-                        checked={selectedDataTypes.includes(dataType)}
-                        onChange={() => handleDataTypeToggle(dataType)}
+                        checked={selectedDataTypes.includes(dataType.value)}
+                        onChange={() => handleDataTypeToggle(dataType.value)}
                         className="w-4 h-4 text-blue-600 border-slate-300 rounded focus:ring-2 focus:ring-blue-500"
                       />
                       <span className="ml-3 text-sm text-slate-700 group-hover:text-slate-900 font-medium">
-                        {dataType}
+                        {dataType.label}
                       </span>
                     </label>
                   ))}
                 </div>
               </div>
 
-              {/* タグカテゴリー */}
-              {tagsData && Object.entries(tagsData).map(([category, tags]) => (
-                <div key={category}>
-                  <div className="flex items-center justify-between mb-2.5">
-                    <h3 className="text-sm font-semibold text-slate-700">
-                      {getCategoryLabel(category)}
-                    </h3>
-                    {selectedTags[category]?.length > 0 && (
-                      <span className="px-2 py-0.5 text-xs font-bold bg-blue-600 text-white rounded-full">
-                        {selectedTags[category].length}
-                      </span>
-                    )}
-                  </div>
-                  <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
-                    {tags.map((tag) => (
-                      <label
-                        key={tag.id}
-                        className="flex items-center cursor-pointer hover:bg-blue-50 px-3 py-2 rounded-lg transition-colors group"
-                      >
-                        <input
-                          type="checkbox"
-                          checked={selectedTags[category]?.includes(tag.name) || false}
-                          onChange={() => handleTagToggle(category, tag.name)}
-                          className="w-4 h-4 text-blue-600 border-slate-300 rounded focus:ring-2 focus:ring-blue-500"
-                        />
-                        <span className="ml-3 text-sm text-slate-700 group-hover:text-slate-900 font-medium">
-                          {tag.name}
+              {/* タグカテゴリー（モデル種別を除外） */}
+              {tagsData && Object.entries(tagsData)
+                .filter(([category]) => category !== 'model_type')
+                .map(([category, tags]) => (
+                  <div key={category}>
+                    <div className="flex items-center justify-between mb-2.5">
+                      <h3 className="text-sm font-semibold text-slate-700">
+                        {getCategoryLabel(category)}
+                      </h3>
+                      {selectedTags[category]?.length > 0 && (
+                        <span className="px-2 py-0.5 text-xs font-bold bg-blue-600 text-white rounded-full">
+                          {selectedTags[category].length}
                         </span>
-                      </label>
-                    ))}
+                      )}
+                    </div>
+                    <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+                      {tags.map((tag) => (
+                        <label
+                          key={tag.id}
+                          className="flex items-center cursor-pointer hover:bg-blue-50 px-3 py-2 rounded-lg transition-colors group"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={selectedTags[category]?.includes(tag.name) || false}
+                            onChange={() => handleTagToggle(category, tag.name)}
+                            className="w-4 h-4 text-blue-600 border-slate-300 rounded focus:ring-2 focus:ring-blue-500"
+                          />
+                          <span className="ml-3 text-sm text-slate-700 group-hover:text-slate-900 font-medium">
+                            {tag.name}
+                          </span>
+                        </label>
+                      ))}
+                    </div>
                   </div>
-                </div>
-              ))}
+                ))}
             </div>
           </div>
         </aside>
@@ -488,9 +533,9 @@ export default function Home() {
         {/* Main Content - Competition List */}
         <div className="flex-1">
           <div className="bg-white rounded-xl shadow-md border border-slate-200">
-            {/* Header */}
+            {/* Header with Sort, Favorite, Status */}
             <div className="px-8 py-6 border-b-2 border-slate-200 bg-gradient-to-r from-slate-50 to-white">
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between mb-4">
                 <div>
                   <h2 className="text-xl font-bold text-slate-900 flex items-center gap-3">
                     <div className="w-1.5 h-6 bg-blue-600 rounded-full"></div>
@@ -502,6 +547,51 @@ export default function Home() {
                     </p>
                   )}
                 </div>
+              </div>
+
+              {/* フィルターコントロール */}
+              <div className="flex items-center gap-3">
+                {/* 並び替え */}
+                <select
+                  value={sortBy}
+                  onChange={(e) => handleSortChange(e.target.value)}
+                  className="px-4 py-2 text-sm border-2 border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all bg-white hover:bg-slate-50 cursor-pointer font-medium"
+                >
+                  {SORT_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+
+                {/* ステータス */}
+                <select
+                  value={status}
+                  onChange={(e) => {
+                    setStatus(e.target.value)
+                    setPage(1)
+                  }}
+                  className="px-4 py-2 text-sm border-2 border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all bg-white hover:bg-slate-50 cursor-pointer font-medium"
+                >
+                  <option value="all">すべて</option>
+                  <option value="active">🟢 開催中</option>
+                  <option value="completed">🔴 終了済み</option>
+                </select>
+
+                {/* お気に入り */}
+                <button
+                  onClick={() => {
+                    setIsFavorite(isFavorite === true ? null : true)
+                    setPage(1)
+                  }}
+                  className={`px-4 py-2 text-sm font-medium rounded-lg transition-all border-2 ${
+                    isFavorite === true
+                      ? 'bg-yellow-50 text-yellow-700 border-yellow-300'
+                      : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                  }`}
+                >
+                  {isFavorite === true ? '⭐ お気に入りのみ' : 'お気に入り'}
+                </button>
               </div>
             </div>
 
@@ -912,7 +1002,6 @@ function getCategoryLabel(category: string): string {
   const labels: Record<string, string> = {
     data_type: 'データ種別',
     task_type: 'タスク種別',
-    model_type: 'モデル種別',
     solution_method: '解法種別',
     competition_feature: 'コンペ特徴',
     domain: 'ドメイン',
