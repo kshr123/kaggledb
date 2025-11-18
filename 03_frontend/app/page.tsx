@@ -40,6 +40,12 @@ export default function Home() {
     fetcher
   )
 
+  // Fetch active competitions count
+  const { data: activeStatsData } = useSWR<CompetitionListResponse>(
+    buildApiUrl('/api/competitions', { limit: 1, status: 'active' }),
+    fetcher
+  )
+
   // Fetch competitions with all filters
   const { data: competitionsData, error, isLoading } = useSWR<CompetitionListResponse>(
     buildApiUrl('/api/competitions', {
@@ -255,11 +261,16 @@ export default function Home() {
     return pages
   }
 
-  // 全体統計から開催中の数を計算
+  // 開催中のコンペ数を取得
   const getActiveCount = () => {
-    if (!totalStatsData) return 0
-    // ここでは簡易的に取得。実際はバックエンドで status=active の count を取得する方が良い
-    return totalStatsData.items.filter(c => c.status === 'active').length
+    if (!activeStatsData) return 0
+    return activeStatsData.total
+  }
+
+  // データタイプの日本語ラベルを取得
+  const getDataTypeLabel = (dataType: string): string => {
+    const found = DATA_TYPES.find(dt => dt.value === dataType)
+    return found ? found.label : dataType
   }
 
   return (
@@ -635,13 +646,13 @@ export default function Home() {
                               {competition.title}
                             </h3>
 
-                          {/* 最優先情報: 評価指標とタスクタイプ */}
+                          {/* 最優先情報: ステータス、評価指標、タスクタイプ、データタイプ */}
                           <div className="flex flex-wrap items-center gap-2.5 mb-4">
                             <StatusBadge status={competition.status} />
                             {competition.metric && isDisplayableMetric(competition.metric) && (
                               <MetricBadge
                                 metric={competition.metric}
-                                description={competition.metric_description}
+                                description={METRIC_DESCRIPTIONS[competition.metric] || competition.metric_description}
                               />
                             )}
                             {competition.tags?.filter(tag =>
@@ -655,6 +666,15 @@ export default function Home() {
                                 🎯 {tag}
                               </span>
                             ))}
+                            {/* データタイプバッジ */}
+                            {competition.data_types && competition.data_types.length > 0 && competition.data_types.map((dataType, idx) => (
+                              <span
+                                key={idx}
+                                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold bg-purple-50 text-purple-700 border border-purple-200 rounded-xl"
+                              >
+                                📁 {getDataTypeLabel(dataType)}
+                              </span>
+                            ))}
                           </div>
 
                           {/* 構造化要約 */}
@@ -665,20 +685,20 @@ export default function Home() {
                             <DatasetInfoDisplay datasetInfo={competition.dataset_info} />
                           )}
 
-                          {/* 補助情報 */}
-                          <div className="flex items-center gap-5 text-sm text-slate-600 mb-4 font-medium">
-                            <span className="flex items-center gap-1.5">
-                              <span className="text-blue-600">🏷️</span>
-                              {competition.domain}
-                            </span>
-                            <span className="flex items-center gap-1.5">
-                              <span className="text-green-600">🚀</span>
-                              開始: {new Date(competition.created_at).toLocaleDateString('ja-JP')}
-                            </span>
-                            <span className="flex items-center gap-1.5">
-                              <span className="text-red-600">🏁</span>
-                              終了: {new Date(competition.deadline).toLocaleDateString('ja-JP')}
-                            </span>
+                          {/* 補助情報 - 視覚的改善 */}
+                          <div className="grid grid-cols-3 gap-3 mb-4">
+                            <div className="px-3 py-2 bg-gradient-to-br from-blue-50 to-indigo-50 border border-blue-200 rounded-lg">
+                              <div className="text-xs text-blue-600 font-semibold mb-0.5">ドメイン</div>
+                              <div className="text-sm text-slate-900 font-medium">{competition.domain}</div>
+                            </div>
+                            <div className="px-3 py-2 bg-gradient-to-br from-green-50 to-emerald-50 border border-green-200 rounded-lg">
+                              <div className="text-xs text-green-600 font-semibold mb-0.5">開始日</div>
+                              <div className="text-sm text-slate-900 font-medium">{new Date(competition.created_at).toLocaleDateString('ja-JP')}</div>
+                            </div>
+                            <div className="px-3 py-2 bg-gradient-to-br from-red-50 to-orange-50 border border-red-200 rounded-lg">
+                              <div className="text-xs text-red-600 font-semibold mb-0.5">終了日</div>
+                              <div className="text-sm text-slate-900 font-medium">{new Date(competition.deadline).toLocaleDateString('ja-JP')}</div>
+                            </div>
                           </div>
 
                           {/* その他のタグ（タスクタイプ以外） */}
