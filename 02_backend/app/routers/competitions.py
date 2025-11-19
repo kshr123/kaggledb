@@ -19,6 +19,11 @@ from app.services.competition import CompetitionService
 
 router = APIRouter()
 
+from pydantic import BaseModel
+
+class FavoriteUpdate(BaseModel):
+    is_favorite: bool
+
 
 # 依存性注入
 def get_competition_service(db: Annotated[Database, Depends(get_database)]) -> CompetitionService:
@@ -51,6 +56,7 @@ def get_competitions(
     domain: Optional[str] = Query(None, description="ドメインフィルタ"),
     metrics: Optional[List[str]] = Query(None, description="評価指標フィルタ（複数可）"),
     data_types: Optional[List[str]] = Query(None, description="データタイプフィルタ（複数可）"),
+    task_types: Optional[List[str]] = Query(None, description="タスク種別フィルタ（複数可）"),
     tags: Optional[List[str]] = Query(None, description="タグフィルタ（複数可）"),
     is_favorite: Optional[bool] = Query(None, description="お気に入りフィルタ"),
     search: Optional[str] = Query(None, description="タイトル検索"),
@@ -86,6 +92,8 @@ def get_competitions(
         filters["metrics"] = metrics  # 複数のメトリックをリストで渡す
     if data_types:
         filters["data_types"] = data_types  # 複数のデータタイプをリストで渡す
+    if task_types:
+        filters["task_types"] = task_types  # 複数のタスク種別をリストで渡す
     if tags:
         filters["tags"] = tags  # 複数のタグをリストで渡す
     if is_favorite is not None:
@@ -215,6 +223,94 @@ def get_competition_discussions(
     return [disc.to_dict() for disc in discussions]
 
 
+@router.get("/discussions/{discussion_id}")
+def get_discussion(
+    discussion_id: int,
+    service: Annotated["DiscussionService", Depends(get_discussion_service)] = None
+):
+    """
+    個別ディスカッションを取得
+
+    Args:
+        discussion_id: ディスカッションID
+
+    Returns:
+        dict: ディスカッション詳細
+    """
+    discussion = service.get_discussion(discussion_id)
+    if not discussion:
+        raise HTTPException(status_code=404, detail="Discussion not found")
+
+    return discussion.to_dict()
+
+
+@router.post("/discussions/{discussion_id}/fetch")
+def fetch_discussion_detail(
+    discussion_id: int,
+    service: Annotated["DiscussionService", Depends(get_discussion_service)] = None
+):
+    """
+    ディスカッション詳細をスクレイピングして取得・保存
+
+    Args:
+        discussion_id: ディスカッションID
+
+    Returns:
+        dict: 取得結果と更新されたディスカッション情報
+    """
+    from app.services.scraper_service import get_scraper_service
+    from app.services.llm_service import get_llm_service
+
+    # ディスカッションを取得
+    discussion = service.get_discussion(discussion_id)
+    if not discussion:
+        raise HTTPException(status_code=404, detail="Discussion not found")
+
+    # スクレイピング実行
+    scraper = get_scraper_service()
+    detail = scraper.get_discussion_detail(discussion.url)
+
+    if not detail or not detail.get('content'):
+        raise HTTPException(status_code=500, detail="Failed to fetch discussion detail")
+
+    content = detail['content']
+
+    # リンク抽出
+    links = extract_links_from_content(content)
+
+    # LLMで構造化要約生成と和訳（学習用に詳細な要約を生成）
+    llm = get_llm_service()
+    structured_summary = None
+    translated_content = None
+
+    if len(content) > 200:  # 200文字以上の場合に処理
+        # 構造化要約生成
+        structured_summary = llm.generate_structured_discussion_summary(
+            content=content,
+            title=discussion.title
+        )
+        # 原文を和訳・整理
+        translated_content = llm.translate_and_organize_discussion(content)
+
+    # データベース更新
+    # 和訳されたコンテンツで上書き（原文はKaggleで確認可能）
+    if translated_content:
+        discussion.content = translated_content
+    else:
+        discussion.content = content
+
+    if structured_summary:
+        discussion.summary = structured_summary
+
+    updated_discussion = service.update_discussion(discussion)
+
+    return {
+        "success": True,
+        "discussion": updated_discussion.to_dict(),
+        "links": links
+    }
+
+
 @router.get("/competitions/{competition_id}/solutions")
 def get_competition_solutions(
     competition_id: str,
@@ -304,17 +400,23 @@ def toggle_favorite(
 def fetch_discussions(
     competition_id: str,
     discussion_service: Annotated["DiscussionService", Depends(get_discussion_service)] = None,
+    solution_service: Annotated["SolutionService", Depends(get_solution_service)] = None,
     competition_service: Annotated[CompetitionService, Depends(get_competition_service)] = None
 ):
     """
-    コンペティションのディスカッションを取得してDBに保存
+    コンペティションのディスカッションとWriteupsを取得してDBに保存
+    同時に解法も自動的に抽出・保存する
 
     Args:
         competition_id: コンペID（slug）
 
     Returns:
-        dict: 取得結果（新規保存数、更新数、合計数）
+        dict: 取得結果（ディスカッション・Writeups・解法の新規保存数、更新数、合計数）
     """
+    print("\n" + "="*80, flush=True)
+    print(f"[ENDPOINT] fetch_discussions called for {competition_id}", flush=True)
+    print("="*80 + "\n", flush=True)
+
     from app.services.scraper_service import get_scraper_service
 
     # コンペの存在確認
@@ -324,24 +426,64 @@ def fetch_discussions(
 
     # スクレイピング実行
     scraper = get_scraper_service()
+
+    # 1. Writeups取得（公式解法ページ、存在する場合のみ）
+    print("\n=== Writeups取得開始 ===", flush=True)
+    writeups = scraper.get_writeups(
+        comp_id=competition_id,
+        max_pages=3,
+        force_refresh=True
+    )
+    writeup_count = len(writeups) if writeups else 0
+    print(f"✓ Writeups取得完了: {writeup_count}件", flush=True)
+
+    # 2. Discussions取得（投票数順、5ページまで）
+    print("\n=== ディスカッション取得開始（投票数順・5ページ）===", flush=True)
     discussions = scraper.get_discussions(
         comp_id=competition_id,
-        max_pages=1,
-        force_refresh=True  # 常に最新を取得
+        max_pages=5,
+        force_refresh=True
     )
+    discussion_count = len(discussions) if discussions else 0
+    print(f"✓ Discussions取得完了: {discussion_count}件", flush=True)
 
-    if not discussions:
-        raise HTTPException(status_code=500, detail="Failed to fetch discussions")
+    # 統合データを作成
+    all_items = []
+    if writeups:
+        all_items.extend(writeups)
+    if discussions:
+        all_items.extend(discussions)
 
-    # サービス層で保存
-    result = discussion_service.fetch_and_save_discussions(
+    if not all_items:
+        raise HTTPException(status_code=500, detail="Failed to fetch discussions and writeups")
+
+    # 3. Discussionsを保存（Writeupsは除外）
+    print(f"\n=== ディスカッション保存開始: {discussion_count}件 ===", flush=True)
+    discussion_result = discussion_service.fetch_and_save_discussions(
         competition_id=competition_id,
-        discussions_data=discussions
+        discussions_data=discussions if discussions else []
     )
+    print(f"✓ ディスカッション保存完了: {discussion_result}", flush=True)
+
+    # 4. 解法を抽出・保存（全データから）
+    # - Writeups（category='writeup'）は全て解法
+    # - Discussionsはタイトルキーワードでフィルタリング
+    print(f"\n=== 解法抽出・保存開始: {len(all_items)}件のアイテムから ===", flush=True)
+    solution_result = solution_service.fetch_and_save_solutions(
+        competition_id=competition_id,
+        discussions_data=all_items,
+        enable_ai=False,
+        scraper_service=None,
+        llm_service=None
+    )
+    print(f"✓ 解法保存完了: {solution_result}", flush=True)
 
     return {
         "success": True,
-        **result
+        "discussions": discussion_result,
+        "solutions": solution_result,
+        "writeups_count": writeup_count,
+        "total_items": len(all_items)
     }
 
 
@@ -445,16 +587,16 @@ def extract_links_from_content(content: str) -> dict:
     }
 
 
-@router.post("/solutions/{solution_id}/summarize")
-def summarize_solution(solution_id: int):
+@router.post("/solutions/{solution_id}/fetch")
+def fetch_solution_detail(solution_id: int):
     """
-    個別の解法を要約（オンデマンド）
+    解法詳細をスクレイピングして取得・保存（ディスカッションと同じパターン）
 
     Args:
         solution_id: 解法ID
 
     Returns:
-        dict: 構造化された要約とリンク
+        dict: 取得結果と更新された解法情報
     """
     from app.services.scraper_service import get_scraper_service
     from app.services.llm_service import get_llm_service
@@ -474,7 +616,7 @@ def summarize_solution(solution_id: int):
     solution_dict = dict(solution)
     conn.close()
 
-    # 解法の詳細を取得
+    # スクレイピング実行
     scraper = get_scraper_service()
     detail = scraper.get_discussion_detail(solution_dict['url'])
 
@@ -486,31 +628,128 @@ def summarize_solution(solution_id: int):
     # リンク抽出
     links = extract_links_from_content(content)
 
-    # 構造化要約を生成
+    # LLMで構造化要約生成と和訳
     llm = get_llm_service()
-    structured_summary = llm.generate_structured_solution_summary(
-        content=content,
-        title=solution_dict['title']
-    )
+    structured_summary = None
+    translated_content = None
+
+    if len(content) > 200:  # 200文字以上の場合に処理
+        # 構造化要約生成
+        structured_summary = llm.generate_structured_solution_summary(
+            content=content,
+            title=solution_dict['title']
+        )
+        # 原文を和訳・整理
+        translated_content = llm.translate_and_organize_discussion(content)
 
     # 技術抽出
     techniques_json = llm.extract_solution_techniques(content, solution_dict['title'])
 
-    # データベース更新（contentは保存しない）
+    # データベース更新（和訳されたcontentを保存）
+    conn = sqlite3.connect(DATABASE_PATH)
+    cursor = conn.cursor()
+
+    if translated_content:
+        cursor.execute("""
+            UPDATE solutions
+            SET content = ?,
+                summary = ?,
+                techniques = ?,
+                updated_at = ?
+            WHERE id = ?
+        """, (
+            translated_content,
+            structured_summary,
+            techniques_json,
+            datetime.now().isoformat(),
+            solution_id
+        ))
+    else:
+        cursor.execute("""
+            UPDATE solutions
+            SET summary = ?,
+                techniques = ?,
+                updated_at = ?
+            WHERE id = ?
+        """, (
+            structured_summary,
+            techniques_json,
+            datetime.now().isoformat(),
+            solution_id
+        ))
+
+    conn.commit()
+
+    # 更新後の解法を取得
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM solutions WHERE id = ?", (solution_id,))
+    updated_solution = dict(cursor.fetchone())
+    conn.close()
+
+    return {
+        "success": True,
+        "solution": updated_solution,
+        "links": links
+    }
+
+
+@router.post("/competitions/{competition_id}/data/fetch")
+def fetch_dataset_info(
+    competition_id: str,
+    competition_service: Annotated[CompetitionService, Depends(get_competition_service)] = None
+):
+    """
+    コンペティションのデータタブ情報を取得してDBに保存
+
+    Args:
+        competition_id: コンペID（slug）
+
+    Returns:
+        dict: 取得結果
+    """
+    # コンペティションが存在するか確認
+    competition = competition_service.get_competition(competition_id)
+    if not competition:
+        raise HTTPException(status_code=404, detail="Competition not found")
+
+    # スクレイパーとLLMサービスを取得
+    from app.services.scraper_service import get_scraper_service
+    from app.services.llm_service import get_llm_service
+
+    scraper = get_scraper_service()
+    llm = get_llm_service()
+
+    # Data タブをスクレイピング
+    data_tab_content = scraper.get_tab_content(competition_id, tab="data")
+
+    if not data_tab_content or not data_tab_content.get('full_text'):
+        raise HTTPException(status_code=500, detail="Failed to scrape data tab")
+
+    # LLMでデータセット情報を抽出
+    dataset_info = llm.extract_dataset_info(
+        data_text=data_tab_content['full_text'],
+        title=competition.title
+    )
+
+    if not dataset_info:
+        raise HTTPException(status_code=500, detail="Failed to extract dataset info")
+
+    # データセット情報を完全なJSON形式で保存
+    import json
+    dataset_info_json = json.dumps(dataset_info, ensure_ascii=False)
+
+    # データベース更新
     conn = sqlite3.connect(DATABASE_PATH)
     cursor = conn.cursor()
 
     cursor.execute("""
-        UPDATE solutions
-        SET summary = ?,
-            techniques = ?,
-            updated_at = ?
+        UPDATE competitions
+        SET dataset_info = ?
         WHERE id = ?
     """, (
-        structured_summary,
-        techniques_json,
-        datetime.now().isoformat(),
-        solution_id
+        dataset_info_json,
+        competition_id
     ))
 
     conn.commit()
@@ -518,7 +757,5 @@ def summarize_solution(solution_id: int):
 
     return {
         "success": True,
-        "summary": structured_summary,
-        "techniques": techniques_json,
-        "links": links
+        "dataset_info": dataset_info  # 構造化データを返す
     }

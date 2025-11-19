@@ -69,18 +69,49 @@ class SolutionService:
         updated_count = 0
         ai_analyzed_count = 0
 
+        print(f"\n=== 解法処理開始: {competition_id} ===", flush=True)
+        print(f"受信アイテム数: {len(discussions_data)}件", flush=True)
+
         # 解法をフィルター
+        # - category='writeup' のアイテムは全て解法
+        # - それ以外はタイトルキーワードでフィルタリング
         solutions_data = []
+        writeup_category_count = 0
+        keyword_match_count = 0
+
         for disc in discussions_data:
-            is_solution, rank = self._is_solution_discussion(disc['title'])
-            if is_solution:
+            category = disc.get('category', '')
+
+            # カテゴリが 'writeup' の場合は無条件で解法として扱う
+            if category == 'writeup':
+                writeup_category_count += 1
                 clean_disc = disc.copy()
                 clean_disc['title'] = self._clean_title(disc['title'], disc.get('author'))
+                # Writeupsからランク情報を抽出
+                _, rank = self._is_solution_discussion(disc['title'])
                 clean_disc['rank'] = rank
-                clean_disc['type'] = 'discussion'
+                clean_disc['type'] = 'writeup'
                 solutions_data.append(clean_disc)
+                print(f"✓ Writeup: {clean_disc['title'][:50]}...", flush=True)
+            else:
+                # Discussionsはタイトルキーワードでフィルタリング
+                is_solution, rank = self._is_solution_discussion(disc['title'])
+                if is_solution:
+                    keyword_match_count += 1
+                    clean_disc = disc.copy()
+                    clean_disc['title'] = self._clean_title(disc['title'], disc.get('author'))
+                    clean_disc['rank'] = rank
+                    clean_disc['type'] = 'discussion'
+                    solutions_data.append(clean_disc)
+                    print(f"✓ Solution (keyword): {clean_disc['title'][:50]}...", flush=True)
+
+        print(f"\n=== フィルタリング完了 ===", flush=True)
+        print(f"  - Writeups（category='writeup'）: {writeup_category_count}件", flush=True)
+        print(f"  - タイトルキーワードマッチ: {keyword_match_count}件", flush=True)
+        print(f"  - 合計解法数: {len(solutions_data)}件", flush=True)
 
         if not solutions_data:
+            print("⚠ 解法が見つかりませんでした", flush=True)
             return {
                 "saved": 0,
                 "updated": 0,
@@ -89,6 +120,7 @@ class SolutionService:
             }
 
         # 解法を保存
+        print(f"\n=== 解法をDBに保存: {len(solutions_data)}件 ===", flush=True)
         for sol_data in solutions_data:
             # メダル判定
             medal = None
@@ -124,8 +156,10 @@ class SolutionService:
 
             if existing:
                 updated_count += 1
+                print(f"  ✓ 更新: {solution.title[:50]}... (rank={solution.rank})", flush=True)
             else:
                 saved_count += 1
+                print(f"  ✓ 新規: {solution.title[:50]}... (rank={solution.rank})", flush=True)
 
             # AI分析
             if enable_ai and scraper_service and llm_service:
@@ -151,6 +185,13 @@ class SolutionService:
                     self.repository.update(saved_solution)
 
                     ai_analyzed_count += 1
+
+        print(f"\n=== 解法保存完了 ===", flush=True)
+        print(f"  新規保存: {saved_count}件", flush=True)
+        print(f"  更新: {updated_count}件", flush=True)
+        print(f"  合計: {saved_count + updated_count}件", flush=True)
+        if enable_ai:
+            print(f"  AI分析: {ai_analyzed_count}件", flush=True)
 
         return {
             "saved": saved_count,
