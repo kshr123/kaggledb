@@ -18,6 +18,33 @@ from app.services.kaggle_client import get_kaggle_client
 from app.config import DATABASE_PATH
 
 
+def is_ranked_competition(comp_data: dict) -> bool:
+    """
+    ランク付きコンペかどうかを判定（練習コンペを除外）
+
+    Args:
+        comp_data: コンペティション情報
+
+    Returns:
+        bool: ランク付きコンペの場合True
+    """
+    title_lower = comp_data['title'].lower()
+    id_lower = comp_data['id'].lower()
+
+    # 除外キーワード（練習・チュートリアル系）
+    exclude_keywords = [
+        'playground', 'getting started', 'getting-started',
+        'tutorial', 'beginner', 'practice', 'learning',
+        'intro to', 'introduction to', 'learn'
+    ]
+
+    for keyword in exclude_keywords:
+        if keyword in title_lower or keyword in id_lower:
+            return False
+
+    return True
+
+
 def is_after_2020(comp_data: dict) -> bool:
     """
     2020年以降のコンペかどうかを判定
@@ -107,26 +134,24 @@ def fetch_and_save_ranked_competitions():
 
     print("✅ Kaggle API接続成功")
 
-    # コンペティション一覧取得（複数ページ・複数カテゴリ）
+    # コンペティション一覧取得（全カテゴリ・複数ページ）
     print(f"\n[2/5] コンペティション取得中...")
     all_competitions = []
+    max_pages = 100  # 2020年以降の全コンペを取得するため多めに
 
-    # ランク付きコンペのカテゴリ: "featured" と "research"
-    ranked_categories = ["featured", "research"]
-    max_pages = 50  # 十分な数を取得
-
-    for category in ranked_categories:
-        print(f"\n   カテゴリ: {category}")
-        for page in range(1, max_pages + 1):
-            try:
-                comps = kaggle_client.get_competitions(page=page, category=category)
-                if not comps:
-                    break
-                all_competitions.extend(comps)
-                print(f"      ページ {page}: {len(comps)}件取得")
-            except Exception as e:
-                print(f"      ⚠️  ページ {page} の取得に失敗: {e}")
+    print(f"   全カテゴリから取得中...")
+    for page in range(1, max_pages + 1):
+        try:
+            comps = kaggle_client.get_competitions(page=page)
+            if not comps:
+                print(f"   ページ {page} でデータなし、取得終了")
                 break
+            all_competitions.extend(comps)
+            if page % 10 == 0:
+                print(f"   ページ {page}: 累計 {len(all_competitions)}件取得")
+        except Exception as e:
+            print(f"   ⚠️  ページ {page} の取得に失敗: {e}")
+            break
 
     # 重複削除
     seen_ids = set()
@@ -138,18 +163,31 @@ def fetch_and_save_ranked_competitions():
 
     print(f"✅ 合計 {len(unique_competitions)}件のユニークなコンペを取得しました")
 
-    # フィルタリング: 2020年以降のみ
-    print(f"\n[3/5] フィルタリング中（2020年以降）...")
+    # フィルタリング: 2020年以降 & ランク付き
+    print(f"\n[3/5] フィルタリング中（2020年以降 & ランク付き）...")
     filtered_competitions = []
+    excluded_practice = []
 
     for comp in unique_competitions:
         # 2020年以降チェック
         if not is_after_2020(comp):
             continue
 
+        # ランク付きコンペチェック（練習コンペを除外）
+        if not is_ranked_competition(comp):
+            excluded_practice.append(comp['title'])
+            continue
+
         filtered_competitions.append(comp)
 
-    print(f"✅ {len(filtered_competitions)}件のコンペ（2020年以降）")
+    print(f"   除外された練習コンペ: {len(excluded_practice)}件")
+    if excluded_practice[:5]:  # 最初の5件を表示
+        for title in excluded_practice[:5]:
+            print(f"      - {title}")
+        if len(excluded_practice) > 5:
+            print(f"      ... 他 {len(excluded_practice) - 5}件")
+
+    print(f"✅ {len(filtered_competitions)}件のランク付きコンペ（2020年以降）")
 
     # データベース接続
     print(f"\n[4/5] データベース操作中...")
@@ -251,11 +289,12 @@ def fetch_and_save_ranked_competitions():
     print("\n[5/5] 完了！")
     print("=" * 60)
     print(f"📊 結果サマリー:")
-    print(f"   カテゴリ: featured, research")
-    print(f"   取得総数: {len(all_competitions)}件")
+    print(f"   Kaggle API取得総数: {len(all_competitions)}件")
     print(f"   ユニーク: {len(unique_competitions)}件")
-    print(f"   2020年以降: {len(filtered_competitions)}件")
-    print(f"   練習コンペ削除: {deleted_count}件")
+    print(f"   除外（2020年以前）: {len(unique_competitions) - len(filtered_competitions) - len(excluded_practice)}件")
+    print(f"   除外（練習コンペ）: {len(excluded_practice)}件")
+    print(f"   2020年以降 & ランク付き: {len(filtered_competitions)}件")
+    print(f"   DB削除（練習コンペ）: {deleted_count}件")
     print(f"   新規追加: {saved_count}件")
     print(f"   更新: {updated_count}件")
     print(f"   スキップ: {skipped_count}件")

@@ -133,6 +133,9 @@ class SolutionService:
                     medal = 'bronze'
 
             # Solutionモデルを作成
+            # type: 'writeup' → 'discussion' にマッピング（DB制約対応）
+            solution_type = 'discussion' if sol_data['type'] == 'writeup' else sol_data['type']
+
             solution = Solution(
                 id=0,
                 competition_id=competition_id,
@@ -141,7 +144,7 @@ class SolutionService:
                 author_tier=sol_data.get('author_tier'),
                 tier_color=sol_data.get('tier_color'),
                 url=sol_data['url'],
-                type=sol_data['type'],
+                type=solution_type,
                 medal=medal,
                 rank=sol_data.get('rank'),
                 vote_count=sol_data['vote_count'],
@@ -198,6 +201,78 @@ class SolutionService:
             "updated": updated_count,
             "total": saved_count + updated_count,
             "ai_analyzed": ai_analyzed_count
+        }
+
+    def fetch_and_save_notebooks(
+        self,
+        competition_id: str,
+        notebooks_data: List[Dict[str, Any]]
+    ) -> Dict[str, int]:
+        """
+        ノートブック一覧をDBに保存（upsert）
+
+        Args:
+            competition_id: コンペティションID
+            notebooks_data: スクレイピングで取得したノートブックデータのリスト
+
+        Returns:
+            dict: 保存結果（saved, updated, total）
+        """
+        saved_count = 0
+        updated_count = 0
+
+        print(f"\n=== ノートブック処理開始: {competition_id} ===", flush=True)
+        print(f"受信アイテム数: {len(notebooks_data)}件", flush=True)
+
+        if not notebooks_data:
+            print("⚠ ノートブックが見つかりませんでした", flush=True)
+            return {
+                "saved": 0,
+                "updated": 0,
+                "total": 0
+            }
+
+        # ノートブックを保存
+        print(f"\n=== ノートブックをDBに保存: {len(notebooks_data)}件 ===", flush=True)
+        for nb_data in notebooks_data:
+            # Solutionモデルを作成（type='notebook'）
+            solution = Solution(
+                id=0,
+                competition_id=competition_id,
+                title=nb_data['title'],
+                author=nb_data.get('author', ''),
+                author_tier=nb_data.get('author_tier'),
+                tier_color=nb_data.get('tier_color'),
+                url=nb_data['url'],
+                type='notebook',  # ノートブックとして保存
+                medal=None,  # ノートブックにはメダルなし
+                rank=None,  # ノートブックにはランクなし
+                vote_count=nb_data.get('vote_count', 0),
+                comment_count=nb_data.get('comment_count', 0)
+            )
+
+            # 既存チェック
+            existing = self._check_existing(competition_id, nb_data['url'])
+
+            # upsert
+            saved_solution = self.repository.upsert_by_url(solution)
+
+            if existing:
+                updated_count += 1
+                print(f"  ✓ 更新: {solution.title[:50]}... (votes={solution.vote_count})", flush=True)
+            else:
+                saved_count += 1
+                print(f"  ✓ 新規: {solution.title[:50]}... (votes={solution.vote_count})", flush=True)
+
+        print(f"\n=== ノートブック保存完了 ===", flush=True)
+        print(f"  新規保存: {saved_count}件", flush=True)
+        print(f"  更新: {updated_count}件", flush=True)
+        print(f"  合計: {saved_count + updated_count}件", flush=True)
+
+        return {
+            "saved": saved_count,
+            "updated": updated_count,
+            "total": saved_count + updated_count
         }
 
     def _clean_title(self, title: str, author: Optional[str] = None) -> str:

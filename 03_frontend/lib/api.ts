@@ -110,14 +110,21 @@ export async function getTags(
  */
 export function buildApiUrl(
   endpoint: string,
-  params?: Record<string, string | number | boolean | undefined>
+  params?: Record<string, string | number | boolean | string[] | undefined>
 ): string {
   if (!params) return `${API_URL}${endpoint}`;
 
   const queryParams = new URLSearchParams();
   Object.entries(params).forEach(([key, value]) => {
     if (value !== undefined && value !== null) {
-      queryParams.append(key, value.toString());
+      // 配列の場合は各要素を個別のパラメータとして追加
+      if (Array.isArray(value)) {
+        value.forEach(item => {
+          queryParams.append(key, item.toString());
+        });
+      } else {
+        queryParams.append(key, value.toString());
+      }
     }
   });
 

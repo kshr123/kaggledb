@@ -3,12 +3,22 @@
  */
 
 /**
+ * 評価指標の型
+ */
+export interface EvaluationMetric {
+  metric: string;
+  explanation: string;
+  why_important: string;
+}
+
+/**
  * 構造化要約の型
  */
 export interface StructuredSummary {
   overview: string;
   objective: string;
   data: string;
+  evaluation: EvaluationMetric;
   business_value: string;
   key_challenges: string[];
 }
@@ -36,27 +46,31 @@ export interface Competition {
   id: string;
   title: string;
   url: string;
-  start_date: string;
-  end_date: string;
+  start_date: string | null;
+  end_date: string | null;
   status: 'active' | 'completed';
-  metric: string;
-  metric_description?: string;
+  metric: string | null;
+  metric_description?: string | null;
   description?: string;
-  summary: string; // JSON文字列（StructuredSummaryをパースする）
-  tags: string[];
-  data_types: string[];
-  domain: string;
-  dataset_info?: string; // JSON文字列（DatasetInfoをパースする）
+  summary: string | null; // 日本語要約テキスト
+  tags: string[]; // JSON配列
+  data_types: string[]; // JSON配列
+  competition_features: string[]; // JSON配列
+  task_types: string[]; // JSON配列
+  domain: string | null;
+  dataset_info?: string | null;
   discussion_count: number;
   solution_status: '未着手' | 'ディスカッションのみ' | '解法分析済み';
   is_favorite: boolean;
+  days_until_deadline?: number | null; // 終了日までの日数（開催中のみ）
   created_at: string;
-  updated_at: string;
 }
 
 export interface CompetitionListResponse {
   items: Competition[];
   total: number;
+  active_count: number;
+  completed_count: number;
   page: number;
   limit: number;
   total_pages: number;

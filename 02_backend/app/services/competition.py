@@ -47,13 +47,18 @@ class CompetitionService:
             filters: フィルター条件
             sort_by: ソート項目
             order: ソート順（asc/desc）
-            search: タイトル検索クエリ
+            search: タイトルまたは評価指標での検索クエリ
 
         Returns:
             List[Competition]: コンペティション一覧
         """
-        # 検索クエリがある場合は検索結果を返す
-        if search:
+        # data_types、task_types、tags フィルターを抽出（JSON配列なのでPython側でフィルタリング）
+        data_types_filter = filters.pop('data_types', None) if filters else None
+        task_types_filter = filters.pop('task_types', None) if filters else None
+        tags_filter = filters.pop('tags', None) if filters else None
+
+        # 検索クエリまたはJSON配列フィルターがある場合は全件取得してフィルタリング
+        if search or data_types_filter or task_types_filter or tags_filter:
             # 全件取得してフィルタリング（パフォーマンス改善の余地あり）
             all_comps = self.repository.list(
                 limit=10000,
@@ -62,10 +67,38 @@ class CompetitionService:
                 sort_by=sort_by,
                 order=order
             )
-            results = [
-                comp for comp in all_comps
-                if search.lower() in comp.title.lower()
-            ]
+
+            results = all_comps
+
+            # タイトルまたは評価指標で検索
+            if search:
+                results = [
+                    comp for comp in results
+                    if search.lower() in comp.title.lower() or
+                       (comp.metric and search.lower() in comp.metric.lower())
+                ]
+
+            # data_typesでフィルタリング（OR検索：いずれかのデータタイプを含む）
+            if data_types_filter:
+                results = [
+                    comp for comp in results
+                    if comp.data_types and any(dt in comp.data_types for dt in data_types_filter)
+                ]
+
+            # task_typesでフィルタリング（OR検索：いずれかのタスク種別を含む）
+            if task_types_filter:
+                results = [
+                    comp for comp in results
+                    if comp.task_types and any(tt in comp.task_types for tt in task_types_filter)
+                ]
+
+            # tagsでフィルタリング（OR検索：いずれかのタグを含む）
+            if tags_filter:
+                results = [
+                    comp for comp in results
+                    if comp.tags and any(tag in comp.tags for tag in tags_filter)
+                ]
+
             # ページネーション適用
             return results[offset:offset + limit]
 
@@ -123,6 +156,40 @@ class CompetitionService:
         Returns:
             int: コンペ数
         """
+        # data_types と tags フィルターがある場合はPython側でフィルタリング
+        if filters and ('data_types' in filters or 'tags' in filters):
+            # フィルターのコピーを作成
+            filters_copy = filters.copy()
+            data_types_filter = filters_copy.pop('data_types', None)
+            tags_filter = filters_copy.pop('tags', None)
+
+            # 全件取得してフィルタリング
+            all_comps = self.repository.list(
+                limit=10000,
+                offset=0,
+                filters=filters_copy,
+                sort_by="created_at",
+                order="desc"
+            )
+
+            results = all_comps
+
+            # data_typesでフィルタリング（OR検索：いずれかのデータタイプを含む）
+            if data_types_filter:
+                results = [
+                    comp for comp in results
+                    if comp.data_types and any(dt in comp.data_types for dt in data_types_filter)
+                ]
+
+            # tagsでフィルタリング（OR検索：いずれかのタグを含む）
+            if tags_filter:
+                results = [
+                    comp for comp in results
+                    if comp.tags and any(tag in comp.tags for tag in tags_filter)
+                ]
+
+            return len(results)
+
         return self.repository.count(filters=filters)
 
     def search_competitions(self, query: str) -> List[Competition]:

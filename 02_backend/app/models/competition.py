@@ -25,6 +25,8 @@ class Competition:
     summary: Optional[str] = None
     tags: List[str] = field(default_factory=list)
     data_types: List[str] = field(default_factory=list)
+    competition_features: List[str] = field(default_factory=list)
+    task_types: List[str] = field(default_factory=list)
     domain: Optional[str] = None
     dataset_info: Optional[str] = None  # JSON文字列
     discussion_count: int = 0
@@ -33,7 +35,6 @@ class Competition:
 
     # メタデータ
     created_at: Optional[datetime] = None
-    updated_at: Optional[datetime] = None
     last_scraped_at: Optional[datetime] = None
 
     def to_dict(self) -> Dict[str, Any]:
@@ -41,7 +42,7 @@ class Competition:
         data = asdict(self)
 
         # datetimeをISO形式の文字列に変換
-        for key in ['start_date', 'end_date', 'created_at', 'updated_at', 'last_scraped_at']:
+        for key in ['start_date', 'end_date', 'created_at', 'last_scraped_at']:
             if data.get(key) and isinstance(data[key], datetime):
                 data[key] = data[key].isoformat()
 
@@ -51,7 +52,7 @@ class Competition:
     def from_dict(cls, data: Dict[str, Any]) -> 'Competition':
         """Dictから作成"""
         # datetimeフィールドを変換
-        datetime_fields = ['start_date', 'end_date', 'created_at', 'updated_at', 'last_scraped_at']
+        datetime_fields = ['start_date', 'end_date', 'created_at', 'last_scraped_at']
         for field_name in datetime_fields:
             if data.get(field_name) and isinstance(data[field_name], str):
                 try:
@@ -64,5 +65,9 @@ class Competition:
             data['tags'] = []
         if 'data_types' not in data:
             data['data_types'] = []
+        if 'competition_features' not in data:
+            data['competition_features'] = []
+        if 'task_types' not in data:
+            data['task_types'] = []
 
         return cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})

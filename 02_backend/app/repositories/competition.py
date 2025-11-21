@@ -35,8 +35,8 @@ class CompetitionRepository(BaseRepository):
                     metric, metric_description, description, summary,
                     tags, data_types, domain, dataset_info,
                     discussion_count, solution_status, is_favorite,
-                    created_at, updated_at, last_scraped_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    created_at, last_scraped_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     competition.id,
@@ -56,7 +56,6 @@ class CompetitionRepository(BaseRepository):
                     competition.discussion_count or 0,
                     competition.solution_status or '未着手',
                     1 if competition.is_favorite else 0,
-                    now.isoformat(),
                     now.isoformat(),
                     competition.last_scraped_at.isoformat() if competition.last_scraped_at else None,
                 ),
@@ -183,7 +182,6 @@ class CompetitionRepository(BaseRepository):
                     discussion_count = ?,
                     solution_status = ?,
                     is_favorite = ?,
-                    updated_at = ?,
                     last_scraped_at = ?
                 WHERE id = ?
                 """,
@@ -204,7 +202,6 @@ class CompetitionRepository(BaseRepository):
                     competition.discussion_count or 0,
                     competition.solution_status or '未着手',
                     1 if competition.is_favorite else 0,
-                    now.isoformat(),
                     competition.last_scraped_at.isoformat() if competition.last_scraped_at else None,
                     competition.id,
                 ),
@@ -329,7 +326,7 @@ class CompetitionRepository(BaseRepository):
         data = dict(row)
 
         # datetimeフィールドを変換
-        datetime_fields = ['start_date', 'end_date', 'created_at', 'updated_at', 'last_scraped_at']
+        datetime_fields = ['start_date', 'end_date', 'created_at', 'last_scraped_at']
         for field_name in datetime_fields:
             if data.get(field_name):
                 try:

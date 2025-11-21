@@ -68,9 +68,20 @@ class KaggleClient:
             コンペティション詳細情報
         """
         try:
-            # Kaggle APIから詳細を取得
-            comp = self.api.competition_view(competition_id)
-            return self._format_competition(comp)
+            # Kaggle APIで検索して取得（competition_viewメソッドは存在しないため）
+            comps = self.api.competitions_list(search=competition_id)
+
+            # 完全一致するものを探す
+            for comp in comps:
+                comp_id = comp.ref
+                if isinstance(comp_id, str) and comp_id.startswith('http'):
+                    comp_id = comp_id.rstrip('/').split('/')[-1]
+
+                if comp_id == competition_id:
+                    return self._format_competition(comp)
+
+            # 見つからない場合
+            return None
 
         except Exception as e:
             print(f"Error fetching competition {competition_id}: {e}")

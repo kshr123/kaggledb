@@ -1,22 +1,28 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { useParams, useRouter } from 'next/navigation'
+import { useParams, useRouter, useSearchParams } from 'next/navigation'
+import Link from 'next/link'
 import { Competition, DatasetInfo, StructuredSummary, Discussion, Solution } from '@/types/competition'
 import SolutionCard from './components/SolutionCard'
 
-type Tab = 'overview' | 'data' | 'discussion' | 'solutions'
+type Tab = 'overview' | 'data' | 'discussion' | 'solutions' | 'notebooks'
 
 export default function CompetitionDetailPage() {
   const params = useParams()
   const router = useRouter()
+  const searchParams = useSearchParams()
   const id = params.id as string
+
+  // URLパラメータからタブを取得（デフォルトは'overview'）
+  const tabFromUrl = (searchParams.get('tab') as Tab) || 'overview'
 
   const [competition, setCompetition] = useState<Competition | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [activeTab, setActiveTab] = useState<Tab>('overview')
+  const [activeTab, setActiveTab] = useState<Tab>(tabFromUrl)
   const [isFavoriteLoading, setIsFavoriteLoading] = useState(false)
+  const [isFetchingInfo, setIsFetchingInfo] = useState(false)
 
   useEffect(() => {
     async function fetchCompetition() {
@@ -81,6 +87,49 @@ export default function CompetitionDetailPage() {
     }
   }
 
+  // 概要とデータセット情報を一度に取得
+  const handleFetchAllInfo = async () => {
+    if (!competition) return
+
+    setIsFetchingInfo(true)
+    try {
+      // 概要を生成
+      const summaryResponse = await fetch(`http://localhost:8000/api/competitions/${id}/summary/generate`, {
+        method: 'POST',
+      })
+
+      if (!summaryResponse.ok) {
+        throw new Error('概要の生成に失敗しました')
+      }
+
+      const summaryData = await summaryResponse.json()
+
+      // データセット情報を取得
+      const datasetResponse = await fetch(`http://localhost:8000/api/competitions/${id}/data/fetch`, {
+        method: 'POST',
+      })
+
+      if (!datasetResponse.ok) {
+        throw new Error('データセット情報の取得に失敗しました')
+      }
+
+      const datasetData = await datasetResponse.json()
+
+      // コンペティション情報を更新
+      setCompetition({
+        ...competition,
+        summary: JSON.stringify(summaryData.summary),
+        dataset_info: JSON.stringify(datasetData.dataset_info)
+      })
+
+      alert('✅ 概要とデータセット情報を取得しました')
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'エラーが発生しました')
+    } finally {
+      setIsFetchingInfo(false)
+    }
+  }
+
   if (loading) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-50 via-gray-50 to-slate-100 flex items-center justify-center">
@@ -97,8 +146,25 @@ export default function CompetitionDetailPage() {
     )
   }
 
-  const summary: StructuredSummary | null = competition.summary ? JSON.parse(competition.summary) : null
-  const datasetInfo: DatasetInfo | null = competition.dataset_info ? JSON.parse(competition.dataset_info) : null
+  // summary and dataset_info are stored as plain text or JSON
+  // Try to parse as JSON, fallback to plain text
+  let summaryData: StructuredSummary | string | null = null
+  if (competition.summary) {
+    try {
+      summaryData = JSON.parse(competition.summary)
+    } catch {
+      summaryData = competition.summary
+    }
+  }
+
+  let datasetInfoData: DatasetInfo | string | null = null
+  if (competition.dataset_info) {
+    try {
+      datasetInfoData = JSON.parse(competition.dataset_info)
+    } catch {
+      datasetInfoData = competition.dataset_info
+    }
+  }
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-gray-50 to-slate-100 py-8">
@@ -162,7 +228,7 @@ export default function CompetitionDetailPage() {
               onClick={() => setActiveTab('data')}
               icon="💾"
               label="データ"
-              disabled={!datasetInfo}
+              disabled={!datasetInfoData}
             />
             <TabButton
               active={activeTab === 'discussion'}
@@ -177,15 +243,29 @@ export default function CompetitionDetailPage() {
               icon="🏆"
               label="解法"
             />
+            <TabButton
+              active={activeTab === 'notebooks'}
+              onClick={() => setActiveTab('notebooks')}
+              icon="📔"
+              label="ノートブック"
+            />
           </div>
         </div>
 
         {/* タブコンテンツ */}
         <div className="bg-white/80 backdrop-blur-sm rounded-b-xl border border-slate-200/60 border-t-0 p-8">
-          {activeTab === 'overview' && <OverviewTab competition={competition} summary={summary} />}
-          {activeTab === 'data' && <DataTab datasetInfo={datasetInfo} competitionId={id} />}
+          {activeTab === 'overview' && (
+            <OverviewTab
+              competition={competition}
+              summary={summaryData}
+              onFetchInfo={handleFetchAllInfo}
+              isFetchingInfo={isFetchingInfo}
+            />
+          )}
+          {activeTab === 'data' && <DataTab datasetInfo={datasetInfoData} competitionId={id} />}
           {activeTab === 'discussion' && <DiscussionTab competitionId={id} />}
           {activeTab === 'solutions' && <SolutionsTab competitionId={id} />}
+          {activeTab === 'notebooks' && <NotebooksTab competitionId={id} />}
         </div>
       </div>
     </div>
@@ -225,11 +305,30 @@ function TabButton({ active, onClick, icon, label, count, disabled }: {
 }
 
 // 概要タブ
-function OverviewTab({ competition, summary }: { competition: Competition; summary: StructuredSummary | null }) {
+function OverviewTab({
+  competition,
+  summary,
+  onFetchInfo,
+  isFetchingInfo = false
+}: {
+  competition: Competition
+  summary: StructuredSummary | string | null
+  onFetchInfo?: () => void
+  isFetchingInfo?: boolean
+}) {
   return (
     <div className="space-y-5">
-      {/* Kaggleで見るボタン */}
-      <div className="flex justify-end">
+      {/* Kaggleで見る & スクレイピングボタン */}
+      <div className="flex justify-end gap-3">
+        {onFetchInfo && (
+          <button
+            onClick={onFetchInfo}
+            disabled={isFetchingInfo}
+            className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed rounded-lg transition-all"
+          >
+            <span>{isFetchingInfo ? '取得中...' : '📝 概要・データ情報を取得'}</span>
+          </button>
+        )}
         <a
           href={competition.url}
           target="_blank"
@@ -245,58 +344,101 @@ function OverviewTab({ competition, summary }: { competition: Competition; summa
 
       {summary && (
         <div className="bg-slate-50 rounded-xl p-6 border border-slate-200 space-y-5">
-          {/* 概要 */}
-          <div>
-            <h3 className="text-base font-semibold text-slate-900 mb-2 flex items-center gap-2">
-              <span>📝</span>
-              概要
-            </h3>
-            <p className="text-slate-700 leading-relaxed">{summary.overview}</p>
-          </div>
-
-          {/* 目的・データ・ビジネス価値を2カラムで表示 */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="bg-white rounded-lg p-4 border border-slate-200">
-              <h4 className="text-sm font-semibold text-slate-900 mb-2 flex items-center gap-1.5">
-                <span>🎯</span>
-                予測目的
-              </h4>
-              <p className="text-sm text-slate-700 leading-relaxed">{summary.objective}</p>
+          {typeof summary === 'string' ? (
+            /* プレーンテキストの場合 */
+            <div>
+              <h3 className="text-base font-semibold text-slate-900 mb-2 flex items-center gap-2">
+                <span>📝</span>
+                概要
+              </h3>
+              <p className="text-slate-700 leading-relaxed whitespace-pre-wrap">{summary}</p>
             </div>
-            <div className="bg-white rounded-lg p-4 border border-slate-200">
-              <h4 className="text-sm font-semibold text-slate-900 mb-2 flex items-center gap-1.5">
-                <span>📊</span>
-                データ
-              </h4>
-              <p className="text-sm text-slate-700 leading-relaxed">{summary.data}</p>
-            </div>
-          </div>
+          ) : (
+            <>
+              {/* 構造化データの場合 */}
+              <div>
+                <h3 className="text-base font-semibold text-slate-900 mb-2 flex items-center gap-2">
+                  <span>📝</span>
+                  概要
+                </h3>
+                <p className="text-slate-700 leading-relaxed">{summary.overview}</p>
+              </div>
 
-          {/* ビジネス価値 */}
-          <div className="bg-white rounded-lg p-4 border border-slate-200">
-            <h4 className="text-sm font-semibold text-slate-900 mb-2 flex items-center gap-1.5">
-              <span>💼</span>
-              ビジネス価値
-            </h4>
-            <p className="text-sm text-slate-700 leading-relaxed">{summary.business_value}</p>
-          </div>
+              {/* 目的・データ・ビジネス価値を2カラムで表示 */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="bg-white rounded-lg p-4 border border-slate-200">
+                  <h4 className="text-sm font-semibold text-slate-900 mb-2 flex items-center gap-1.5">
+                    <span>🎯</span>
+                    予測目的
+                  </h4>
+                  <p className="text-sm text-slate-700 leading-relaxed">{summary.objective}</p>
+                </div>
+                <div className="bg-white rounded-lg p-4 border border-slate-200">
+                  <h4 className="text-sm font-semibold text-slate-900 mb-2 flex items-center gap-1.5">
+                    <span>📊</span>
+                    データ
+                  </h4>
+                  <p className="text-sm text-slate-700 leading-relaxed">{summary.data}</p>
+                </div>
+              </div>
 
-          {/* 主な課題 */}
-          {summary.key_challenges && summary.key_challenges.length > 0 && (
-            <div className="bg-white rounded-lg p-4 border border-slate-200">
-              <h4 className="text-sm font-semibold text-slate-900 mb-3 flex items-center gap-1.5">
-                <span>⚡</span>
-                主な課題
-              </h4>
-              <ul className="space-y-2">
-                {summary.key_challenges.map((challenge, index) => (
-                  <li key={index} className="flex items-start gap-2 text-sm text-slate-700">
-                    <span className="text-blue-600 mt-0.5">•</span>
-                    <span>{challenge}</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
+              {/* ビジネス価値 */}
+              <div className="bg-white rounded-lg p-4 border border-slate-200">
+                <h4 className="text-sm font-semibold text-slate-900 mb-2 flex items-center gap-1.5">
+                  <span>💼</span>
+                  ビジネス価値
+                </h4>
+                <p className="text-sm text-slate-700 leading-relaxed">{summary.business_value}</p>
+              </div>
+
+              {/* 評価指標（最重要） */}
+              {summary.evaluation && (
+                <div className="bg-gradient-to-br from-blue-50 to-indigo-50 rounded-lg p-5 border-2 border-blue-200">
+                  <h4 className="text-base font-bold text-blue-900 mb-3 flex items-center gap-2">
+                    <span className="text-xl">📈</span>
+                    評価指標
+                  </h4>
+                  <div className="space-y-3">
+                    {/* 指標名 */}
+                    <div>
+                      <span className="inline-block px-3 py-1.5 bg-blue-600 text-white rounded-lg text-sm font-bold mb-2">
+                        {summary.evaluation.metric}
+                      </span>
+                    </div>
+
+                    {/* 説明 */}
+                    <div className="bg-white/80 rounded-lg p-3 border border-blue-100">
+                      <h5 className="text-xs font-semibold text-blue-900 mb-1.5">📖 指標の説明</h5>
+                      <p className="text-sm text-slate-700 leading-relaxed">{summary.evaluation.explanation}</p>
+                    </div>
+
+                    {/* 重要性 */}
+                    <div className="bg-white/80 rounded-lg p-3 border border-blue-100">
+                      <h5 className="text-xs font-semibold text-blue-900 mb-1.5">💡 なぜ重要か</h5>
+                      <p className="text-sm text-slate-700 leading-relaxed">{summary.evaluation.why_important}</p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* 主な課題 */}
+              {summary.key_challenges && summary.key_challenges.length > 0 && (
+                <div className="bg-white rounded-lg p-4 border border-slate-200">
+                  <h4 className="text-sm font-semibold text-slate-900 mb-3 flex items-center gap-1.5">
+                    <span>⚡</span>
+                    主な課題
+                  </h4>
+                  <ul className="space-y-2">
+                    {summary.key_challenges.map((challenge, index) => (
+                      <li key={index} className="flex items-start gap-2 text-sm text-slate-700">
+                        <span className="text-blue-600 mt-0.5">•</span>
+                        <span>{challenge}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </>
           )}
         </div>
       )}
@@ -340,11 +482,23 @@ function OverviewTab({ competition, summary }: { competition: Competition; summa
 }
 
 // データタブ
-function DataTab({ datasetInfo, competitionId }: { datasetInfo: DatasetInfo | null; competitionId: string }) {
+function DataTab({ datasetInfo, competitionId }: { datasetInfo: DatasetInfo | string | null; competitionId: string }) {
   if (!datasetInfo) {
     return (
       <div className="text-center py-12 text-slate-500">
         データセット情報がまだ収集されていません
+      </div>
+    )
+  }
+
+  // If datasetInfo is a plain string, show it as text
+  if (typeof datasetInfo === 'string') {
+    return (
+      <div className="space-y-6">
+        <div className="bg-slate-50 rounded-xl p-5 border border-slate-200">
+          <h3 className="text-lg font-semibold text-slate-900 mb-3">📄 データセット情報</h3>
+          <p className="text-slate-700 leading-relaxed whitespace-pre-wrap">{datasetInfo}</p>
+        </div>
       </div>
     )
   }
@@ -490,8 +644,19 @@ function DiscussionTab({ competitionId }: { competitionId: string }) {
 
       const data = await res.json()
 
-      // 成功メッセージ
-      alert(`✅ ディスカッション取得完了\n新規: ${data.saved}件\n更新: ${data.updated}件\n合計: ${data.total}件`)
+      // 成功メッセージ（Writeups・解法も同時に取得されたことを通知）
+      const writeupsInfo = data.writeups_count > 0 ? `\n（Writeups: ${data.writeups_count}件含む）` : ''
+      alert(
+        `✅ ディスカッション・解法取得完了\n\n` +
+        `【ディスカッション】\n` +
+        `新規: ${data.discussions.saved}件\n` +
+        `更新: ${data.discussions.updated}件\n` +
+        `合計: ${data.discussions.total}件${writeupsInfo}\n\n` +
+        `【解法】\n` +
+        `新規: ${data.solutions.saved}件\n` +
+        `更新: ${data.solutions.updated}件\n` +
+        `合計: ${data.solutions.total}件`
+      )
 
       // ディスカッション一覧を再取得
       const listRes = await fetch(`http://localhost:8000/api/competitions/${competitionId}/discussions`)
@@ -571,13 +736,10 @@ function DiscussionTab({ competitionId }: { competitionId: string }) {
       ) : (
         <div className="bg-white border border-slate-200 rounded-lg divide-y divide-slate-200">
           {discussions.map((discussion) => (
-            <button
+            <Link
               key={discussion.id}
-              onClick={() => {
-                setSelectedDiscussion(discussion)
-                setIsModalOpen(true)
-              }}
-              className="w-full text-left px-4 py-3 hover:bg-slate-50 transition-colors group"
+              href={`/competitions/${competitionId}/discussions/${discussion.id}`}
+              className="block px-4 py-3 hover:bg-slate-50 transition-colors group"
             >
               <div className="flex items-start gap-3">
                 {/* 投票数 */}
@@ -631,7 +793,7 @@ function DiscussionTab({ competitionId }: { competitionId: string }) {
                   </div>
                 </div>
               </div>
-            </button>
+            </Link>
           ))}
         </div>
       )}
@@ -743,7 +905,6 @@ function SolutionsTab({ competitionId }: { competitionId: string }) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [fetching, setFetching] = useState(false)
-  const [enableAI, setEnableAI] = useState(false)
 
   useEffect(() => {
     async function fetchSolutions() {
@@ -776,7 +937,7 @@ function SolutionsTab({ competitionId }: { competitionId: string }) {
       setError(null)
 
       const res = await fetch(
-        `http://localhost:8000/api/competitions/${competitionId}/solutions/fetch?enable_ai=${enableAI}`,
+        `http://localhost:8000/api/competitions/${competitionId}/solutions/fetch`,
         { method: 'POST' }
       )
 
@@ -796,8 +957,7 @@ function SolutionsTab({ competitionId }: { competitionId: string }) {
       alert(
         `✅ 解法収集完了\n\n` +
         `新規: ${result.saved}件\n` +
-        `更新: ${result.updated}件\n` +
-        `AI分析: ${result.ai_analyzed}件`
+        `更新: ${result.updated}件`
       )
     } catch (err) {
       setError(err instanceof Error ? err.message : '不明なエラーが発生しました')
@@ -828,38 +988,17 @@ function SolutionsTab({ competitionId }: { competitionId: string }) {
         <p className="text-slate-500 mb-4">解法がまだ収集されていません</p>
 
         {/* 解法収集ボタン */}
-        <div className="flex flex-col items-center gap-4">
-          <div className="flex items-center gap-2">
-            <input
-              type="checkbox"
-              id="enableAI"
-              checked={enableAI}
-              onChange={(e) => setEnableAI(e.target.checked)}
-              className="w-4 h-4 text-blue-600 rounded focus:ring-blue-500"
-            />
-            <label htmlFor="enableAI" className="text-sm text-slate-600">
-              AI分析を有効化（要約・技術抽出）
-            </label>
-          </div>
-
-          <button
-            onClick={handleFetchSolutions}
-            disabled={fetching}
-            className={`px-6 py-2 rounded-lg font-medium transition-colors ${
-              fetching
-                ? 'bg-slate-300 text-slate-500 cursor-not-allowed'
-                : 'bg-blue-600 text-white hover:bg-blue-700'
-            }`}
-          >
-            {fetching ? '収集中...' : '解法を取得'}
-          </button>
-
-          {enableAI && (
-            <p className="text-xs text-amber-600">
-              ⚠️ AI分析には時間がかかります（1件あたり数秒〜10秒）
-            </p>
-          )}
-        </div>
+        <button
+          onClick={handleFetchSolutions}
+          disabled={fetching}
+          className={`px-6 py-2 rounded-lg font-medium transition-colors ${
+            fetching
+              ? 'bg-slate-300 text-slate-500 cursor-not-allowed'
+              : 'bg-blue-600 text-white hover:bg-blue-700'
+          }`}
+        >
+          {fetching ? '収集中...' : '解法を取得'}
+        </button>
       </div>
     )
   }
@@ -867,20 +1006,7 @@ function SolutionsTab({ competitionId }: { competitionId: string }) {
   return (
     <div className="space-y-4">
       {/* 解法収集ボタン（上部） */}
-      <div className="flex items-center justify-between p-4 bg-slate-50 rounded-lg border border-slate-200">
-        <div className="flex items-center gap-3">
-          <input
-            type="checkbox"
-            id="enableAI-top"
-            checked={enableAI}
-            onChange={(e) => setEnableAI(e.target.checked)}
-            className="w-4 h-4 text-blue-600 rounded focus:ring-blue-500"
-          />
-          <label htmlFor="enableAI-top" className="text-sm text-slate-600">
-            AI分析を有効化（要約・技術抽出）
-          </label>
-        </div>
-
+      <div className="flex justify-end">
         <button
           onClick={handleFetchSolutions}
           disabled={fetching}
@@ -900,6 +1026,141 @@ function SolutionsTab({ competitionId }: { competitionId: string }) {
           <SolutionCard
             key={solution.id}
             solution={solution}
+            competitionId={competitionId}
+          />
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// ノートブックタブコンポーネント
+function NotebooksTab({ competitionId }: { competitionId: string }) {
+  const [notebooks, setNotebooks] = useState<Solution[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [fetching, setFetching] = useState(false)
+
+  useEffect(() => {
+    async function loadNotebooks() {
+      try {
+        setLoading(true)
+        setError(null)
+        const res = await fetch(`http://localhost:8000/api/competitions/${competitionId}/notebooks`)
+
+        if (!res.ok) {
+          throw new Error('ノートブックの取得に失敗しました')
+        }
+
+        const data = await res.json()
+        setNotebooks(data)
+      } catch (err) {
+        setError(err instanceof Error ? err.message : '不明なエラーが発生しました')
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    loadNotebooks()
+  }, [competitionId])
+
+  const handleFetchNotebooks = async () => {
+    try {
+      setFetching(true)
+      setError(null)
+
+      const res = await fetch(
+        `http://localhost:8000/api/competitions/${competitionId}/notebooks/fetch`,
+        { method: 'POST' }
+      )
+
+      if (!res.ok) {
+        throw new Error('ノートブックの収集に失敗しました')
+      }
+
+      const result = await res.json()
+
+      // ノートブック一覧を再取得
+      const notebooksRes = await fetch(`http://localhost:8000/api/competitions/${competitionId}/notebooks`)
+      if (notebooksRes.ok) {
+        const data = await notebooksRes.json()
+        setNotebooks(data)
+      }
+
+      alert(
+        `✅ ノートブック収集完了\n\n` +
+        `新規: ${result.saved}件\n` +
+        `更新: ${result.updated}件`
+      )
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '不明なエラーが発生しました')
+    } finally {
+      setFetching(false)
+    }
+  }
+
+  if (loading) {
+    return <div className="text-center py-8">読み込み中...</div>
+  }
+
+  if (error) {
+    return (
+      <div className="text-center py-8">
+        <p className="text-red-600 mb-4">{error}</p>
+        <button
+          onClick={handleFetchNotebooks}
+          className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+        >
+          再試行
+        </button>
+      </div>
+    )
+  }
+
+  if (notebooks.length === 0) {
+    return (
+      <div className="text-center py-12">
+        <p className="text-slate-500 mb-4">ノートブックがまだ収集されていません</p>
+
+        {/* ノートブック収集ボタン */}
+        <button
+          onClick={handleFetchNotebooks}
+          disabled={fetching}
+          className={`px-6 py-2 rounded-lg font-medium transition-colors ${
+            fetching
+              ? 'bg-slate-300 text-slate-500 cursor-not-allowed'
+              : 'bg-blue-600 text-white hover:bg-blue-700'
+          }`}
+        >
+          {fetching ? '収集中...' : 'ノートブックを取得'}
+        </button>
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-4">
+      {/* ノートブック収集ボタン（上部） */}
+      <div className="flex justify-end">
+        <button
+          onClick={handleFetchNotebooks}
+          disabled={fetching}
+          className={`px-4 py-2 rounded-lg font-medium text-sm transition-colors ${
+            fetching
+              ? 'bg-slate-300 text-slate-500 cursor-not-allowed'
+              : 'bg-blue-600 text-white hover:bg-blue-700'
+          }`}
+        >
+          {fetching ? '収集中...' : 'ノートブックを再取得'}
+        </button>
+      </div>
+
+      {/* ノートブック一覧 */}
+      <div className="space-y-3">
+        {notebooks.map((notebook) => (
+          <SolutionCard
+            key={notebook.id}
+            solution={notebook}
             competitionId={competitionId}
           />
         ))}

@@ -43,6 +43,30 @@ class DiscussionService:
             limit=limit
         )
 
+    def get_discussion(self, discussion_id: int) -> Optional[Discussion]:
+        """
+        個別ディスカッションを取得
+
+        Args:
+            discussion_id: ディスカッションID
+
+        Returns:
+            Optional[Discussion]: ディスカッション（存在しない場合はNone）
+        """
+        return self.repository.get_by_id(discussion_id)
+
+    def update_discussion(self, discussion: Discussion) -> Discussion:
+        """
+        ディスカッションを更新
+
+        Args:
+            discussion: ディスカッションモデル
+
+        Returns:
+            Discussion: 更新されたディスカッション
+        """
+        return self.repository.update(discussion)
+
     def fetch_and_save_discussions(
         self,
         competition_id: str,

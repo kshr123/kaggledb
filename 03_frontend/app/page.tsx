@@ -1,7 +1,7 @@
 'use client'
 
-import { useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { useState, useEffect } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import useSWR from 'swr'
 import { fetcher, buildApiUrl } from '@/lib/api'
 import type { CompetitionListResponse, StructuredSummary, DatasetInfo } from '@/types/competition'
@@ -10,23 +10,81 @@ import { METRIC_GROUPS, DATA_TYPES, SORT_OPTIONS } from '@/lib/filter-constants'
 import { METRIC_DESCRIPTIONS } from '@/lib/metric-descriptions'
 import type { MetricCategory, MetricSubCategory } from '@/lib/filter-constants'
 
+// 英語のデータタイプ値を日本語に変換（API送信用）
+const convertDataTypesToJapanese = (englishValues: string[]): string[] => {
+  const mapping: Record<string, string> = {
+    'Tabular': 'テーブルデータ',
+    'Image': '画像',
+    'Text': 'テキスト',
+    'Time Series': '時系列',
+    'Audio': '音声',
+    'Video': '動画',
+    '3D': '3D',
+    'Graph': 'グラフ',
+    'Geospatial': '地理空間',
+    'Code': 'コード',
+    'Structured': '構造化',
+    'Unstructured': '非構造化',
+    'Mixed': '混合',
+  }
+  return englishValues.map(val => mapping[val] || val)
+}
+
 export default function Home() {
   const router = useRouter()
-  const [search, setSearch] = useState('')
-  const [status, setStatus] = useState<string>('all')
-  const [page, setPage] = useState(1)
+  const searchParams = useSearchParams()
+
+  // URLから初期状態を復元
+  const [search, setSearch] = useState(searchParams.get('search') || '')
+  const [status, setStatus] = useState<string>(searchParams.get('status') || 'all')
+  const [page, setPage] = useState(Number(searchParams.get('page')) || 1)
   const [selectedTags, setSelectedTags] = useState<Record<string, string[]>>({})
 
-  // 新しいフィルター状態
-  const [selectedMetrics, setSelectedMetrics] = useState<string[]>([])
-  const [selectedDataTypes, setSelectedDataTypes] = useState<string[]>([])
-  const [isFavorite, setIsFavorite] = useState<boolean | null>(null)
-  const [sortBy, setSortBy] = useState('created_at')
-  const [order, setOrder] = useState<'asc' | 'desc'>('desc')
+  // 新しいフィルター状態（URLから復元）
+  const [selectedMetrics, setSelectedMetrics] = useState<string[]>(
+    searchParams.get('metrics')?.split(',').filter(Boolean) || []
+  )
+  const [selectedDataTypes, setSelectedDataTypes] = useState<string[]>(
+    searchParams.get('dataTypes')?.split(',').filter(Boolean) || []
+  )
+  const [selectedTaskTypes, setSelectedTaskTypes] = useState<string[]>(
+    searchParams.get('taskTypes')?.split(',').filter(Boolean) || []
+  )
+  const [isFavorite, setIsFavorite] = useState<boolean | null>(
+    searchParams.get('favorite') === 'true' ? true : searchParams.get('favorite') === 'false' ? false : null
+  )
+  const [sortBy, setSortBy] = useState(searchParams.get('sort') || 'start_date')
+  const [order, setOrder] = useState<'asc' | 'desc'>((searchParams.get('order') as 'asc' | 'desc') || 'desc')
 
   // 展開状態の管理
   const [expandedMetricCategories, setExpandedMetricCategories] = useState<Set<string>>(new Set())
   const [expandedMetricSubCategories, setExpandedMetricSubCategories] = useState<Set<string>>(new Set())
+
+  // ページ移動時にスクロールを上に戻す
+  useEffect(() => {
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }, [page])
+
+  // フィルター状態をURLに同期
+  useEffect(() => {
+    const params = new URLSearchParams()
+
+    if (search) params.set('search', search)
+    if (status !== 'all') params.set('status', status)
+    if (page !== 1) params.set('page', String(page))
+    if (selectedMetrics.length > 0) params.set('metrics', selectedMetrics.join(','))
+    if (selectedDataTypes.length > 0) params.set('dataTypes', selectedDataTypes.join(','))
+    if (selectedTaskTypes.length > 0) params.set('taskTypes', selectedTaskTypes.join(','))
+    if (isFavorite !== null) params.set('favorite', String(isFavorite))
+    if (sortBy !== 'start_date') params.set('sort', sortBy)
+    if (order !== 'desc') params.set('order', order)
+
+    const queryString = params.toString()
+    const newUrl = queryString ? `/?${queryString}` : '/'
+
+    // 履歴を汚さないようにreplaceを使用
+    router.replace(newUrl, { scroll: false })
+  }, [search, status, page, selectedMetrics, selectedDataTypes, selectedTaskTypes, isFavorite, sortBy, order, router])
 
   // Fetch tags grouped by category
   const { data: tagsData } = useSWR<TagsByCategory>(
@@ -54,7 +112,8 @@ export default function Home() {
       ...(status !== 'all' && { status }),
       ...(search && { search }),
       ...(selectedMetrics.length > 0 && { metrics: selectedMetrics }),
-      ...(selectedDataTypes.length > 0 && { data_types: selectedDataTypes }),
+      ...(selectedDataTypes.length > 0 && { data_types: convertDataTypesToJapanese(selectedDataTypes) }),
+      ...(selectedTaskTypes.length > 0 && { task_types: selectedTaskTypes }),
       // selectedTagsを平坦化してtagsパラメータに渡す
       ...(Object.values(selectedTags).flat().length > 0 && {
         tags: Object.values(selectedTags).flat()
@@ -68,17 +127,26 @@ export default function Home() {
 
   // タグフィルターのトグル
   const handleTagToggle = (category: string, tagName: string) => {
-    setSelectedTags((prev) => {
-      const categoryTags = prev[category] || []
-      const newCategoryTags = categoryTags.includes(tagName)
-        ? categoryTags.filter((t) => t !== tagName)
-        : [...categoryTags, tagName]
+    // task_type の場合は専用のステートを使用
+    if (category === 'task_type') {
+      setSelectedTaskTypes((prev) =>
+        prev.includes(tagName)
+          ? prev.filter((t) => t !== tagName)
+          : [...prev, tagName]
+      )
+    } else {
+      setSelectedTags((prev) => {
+        const categoryTags = prev[category] || []
+        const newCategoryTags = categoryTags.includes(tagName)
+          ? categoryTags.filter((t) => t !== tagName)
+          : [...categoryTags, tagName]
 
-      return {
-        ...prev,
-        [category]: newCategoryTags,
-      }
-    })
+        return {
+          ...prev,
+          [category]: newCategoryTags,
+        }
+      })
+    }
     setPage(1)
   }
 
@@ -202,6 +270,7 @@ export default function Home() {
     setSelectedTags({})
     setSelectedMetrics([])
     setSelectedDataTypes([])
+    setSelectedTaskTypes([])
     setIsFavorite(null)
     setSearch('')
     setStatus('all')
@@ -271,6 +340,40 @@ export default function Home() {
   const getDataTypeLabel = (dataType: string): string => {
     const found = DATA_TYPES.find(dt => dt.value === dataType)
     return found ? found.label : dataType
+  }
+
+  // お気に入りのトグル
+  const handleFavoriteToggle = async (competitionId: string, currentState: boolean) => {
+    try {
+      const response = await fetch(`http://localhost:8000/api/competitions/${competitionId}/favorite`, {
+        method: 'PATCH',
+      })
+
+      if (!response.ok) {
+        throw new Error('Failed to toggle favorite')
+      }
+
+      // データを再検証してUIを更新
+      const { mutate } = await import('swr')
+      mutate(buildApiUrl('/api/competitions', {
+        page,
+        limit: 20,
+        ...(status !== 'all' && { status }),
+        ...(search && { search }),
+        ...(selectedMetrics.length > 0 && { metrics: selectedMetrics }),
+        ...(selectedDataTypes.length > 0 && { data_types: convertDataTypesToJapanese(selectedDataTypes) }),
+        ...(selectedTaskTypes.length > 0 && { task_types: selectedTaskTypes }),
+        ...(Object.values(selectedTags).flat().length > 0 && {
+          tags: Object.values(selectedTags).flat()
+        }),
+        ...(isFavorite !== null && { is_favorite: isFavorite }),
+        sort_by: sortBy,
+        order,
+      }))
+    } catch (error) {
+      console.error('Error toggling favorite:', error)
+      alert('お気に入りの更新に失敗しました')
+    }
   }
 
   return (
@@ -508,41 +611,53 @@ export default function Home() {
                 </div>
               </div>
 
-              {/* タグカテゴリー（モデル種別、データ種別、タスク種別を除外） */}
+              {/* タグカテゴリー（モデル種別、データ種別を除外） */}
               {tagsData && Object.entries(tagsData)
-                .filter(([category]) => !['model_type', 'data_type', 'task_type'].includes(category))
-                .map(([category, tags]) => (
-                  <div key={category}>
-                    <div className="flex items-center justify-between mb-2.5">
-                      <h3 className="text-sm font-semibold text-slate-700">
-                        {getCategoryLabel(category)}
-                      </h3>
-                      {selectedTags[category]?.length > 0 && (
-                        <span className="px-2 py-0.5 text-xs font-bold bg-blue-600 text-white rounded-full">
-                          {selectedTags[category].length}
-                        </span>
-                      )}
-                    </div>
-                    <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
-                      {tags.map((tag) => (
-                        <label
-                          key={tag.id}
-                          className="flex items-center cursor-pointer hover:bg-blue-50 px-3 py-2 rounded-lg transition-colors group"
-                        >
-                          <input
-                            type="checkbox"
-                            checked={selectedTags[category]?.includes(tag.name) || false}
-                            onChange={() => handleTagToggle(category, tag.name)}
-                            className="w-4 h-4 text-blue-600 border-slate-300 rounded focus:ring-2 focus:ring-blue-500"
-                          />
-                          <span className="ml-3 text-sm text-slate-700 group-hover:text-slate-900 font-medium">
-                            {tag.name}
+                .filter(([category]) => !['model_type', 'data_type'].includes(category))
+                .map(([category, tags]) => {
+                  // task_type の場合は selectedTaskTypes を使用
+                  const isTaskType = category === 'task_type'
+                  const selectedCount = isTaskType
+                    ? selectedTaskTypes.length
+                    : (selectedTags[category]?.length || 0)
+
+                  return (
+                    <div key={category}>
+                      <div className="flex items-center justify-between mb-2.5">
+                        <h3 className="text-sm font-semibold text-slate-700">
+                          {getCategoryLabel(category)}
+                        </h3>
+                        {selectedCount > 0 && (
+                          <span className="px-2 py-0.5 text-xs font-bold bg-blue-600 text-white rounded-full">
+                            {selectedCount}
                           </span>
-                        </label>
-                      ))}
+                        )}
+                      </div>
+                      <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+                        {tags.map((tag) => (
+                          <label
+                            key={tag.id}
+                            className="flex items-center cursor-pointer hover:bg-blue-50 px-3 py-2 rounded-lg transition-colors group"
+                          >
+                            <input
+                              type="checkbox"
+                              checked={
+                                isTaskType
+                                  ? selectedTaskTypes.includes(tag.name)
+                                  : (selectedTags[category]?.includes(tag.name) || false)
+                              }
+                              onChange={() => handleTagToggle(category, tag.name)}
+                              className="w-4 h-4 text-blue-600 border-slate-300 rounded focus:ring-2 focus:ring-blue-500"
+                            />
+                            <span className="ml-3 text-sm text-slate-700 group-hover:text-slate-900 font-medium">
+                              {tag.name}
+                            </span>
+                          </label>
+                        ))}
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  )
+                })}
             </div>
           </div>
         </aside>
@@ -603,11 +718,11 @@ export default function Home() {
                   }}
                   className={`px-4 py-2 text-sm font-medium rounded-lg transition-all border-2 ${
                     isFavorite === true
-                      ? 'bg-yellow-50 text-yellow-700 border-yellow-300'
+                      ? 'bg-yellow-100 text-slate-900 border-yellow-400'
                       : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
                   }`}
                 >
-                  {isFavorite === true ? '⭐ お気に入りのみ' : 'お気に入り'}
+                  ⭐ お気に入り
                 </button>
               </div>
             </div>
@@ -641,7 +756,7 @@ export default function Home() {
                           <div className="flex-1 min-w-0">
                             <h3
                               onClick={() => router.push(`/competitions/${competition.id}`)}
-                              className="text-lg font-semibold text-slate-900 mb-3 group-hover:text-blue-600 transition-colors cursor-pointer tracking-tight"
+                              className="text-lg font-semibold text-slate-900 mb-3 hover:text-blue-600 transition-colors cursor-pointer tracking-tight"
                             >
                               {competition.title}
                             </h3>
@@ -685,19 +800,27 @@ export default function Home() {
                             <DatasetInfoDisplay datasetInfo={competition.dataset_info} />
                           )}
 
-                          {/* 補助情報 - 視覚的改善 */}
-                          <div className="grid grid-cols-3 gap-3 mb-4">
-                            <div className="px-3 py-2 bg-gradient-to-br from-blue-50 to-indigo-50 border border-blue-200 rounded-lg">
-                              <div className="text-xs text-blue-600 font-semibold mb-0.5">ドメイン</div>
-                              <div className="text-sm text-slate-900 font-medium">{competition.domain}</div>
+                          {/* 補助情報 */}
+                          <div className="flex items-center gap-4 mb-4 text-sm text-slate-600">
+                            <div className="flex items-center gap-1.5">
+                              <span className="font-medium">ドメイン:</span>
+                              <span className="text-slate-900">{competition.domain}</span>
                             </div>
-                            <div className="px-3 py-2 bg-gradient-to-br from-green-50 to-emerald-50 border border-green-200 rounded-lg">
-                              <div className="text-xs text-green-600 font-semibold mb-0.5">開始日</div>
-                              <div className="text-sm text-slate-900 font-medium">{new Date(competition.created_at).toLocaleDateString('ja-JP')}</div>
-                            </div>
-                            <div className="px-3 py-2 bg-gradient-to-br from-red-50 to-orange-50 border border-red-200 rounded-lg">
-                              <div className="text-xs text-red-600 font-semibold mb-0.5">終了日</div>
-                              <div className="text-sm text-slate-900 font-medium">{new Date(competition.deadline).toLocaleDateString('ja-JP')}</div>
+                            <span className="text-slate-300">|</span>
+                            <div className="flex items-center gap-2">
+                              <div className="flex items-center gap-1.5">
+                                <span className="font-medium">開始:</span>
+                                <span className="text-slate-900">
+                                  {competition.start_date ? new Date(competition.start_date).toLocaleDateString('ja-JP') : '-'}
+                                </span>
+                              </div>
+                              <span className="text-slate-400">ー</span>
+                              <div className="flex items-center gap-1.5">
+                                <span className="font-medium">終了:</span>
+                                <span className="text-slate-900">
+                                  {competition.end_date ? new Date(competition.end_date).toLocaleDateString('ja-JP') : '-'}
+                                </span>
+                              </div>
                             </div>
                           </div>
 
@@ -716,17 +839,32 @@ export default function Home() {
                             ))}
                           </div>
                         </div>
-                        <a
-                          href={competition.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="shrink-0 px-5 py-2.5 text-sm font-medium text-slate-700 bg-slate-50 hover:bg-slate-100 border border-slate-200 hover:border-slate-300 rounded-lg transition-all flex items-center gap-2 group/btn"
-                        >
-                          <span>Kaggle で見る</span>
-                          <svg className="w-4 h-4 group-hover/btn:translate-x-0.5 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-                          </svg>
-                        </a>
+                        <div className="shrink-0 flex flex-col gap-2">
+                          {/* お気に入りボタン */}
+                          <button
+                            onClick={() => handleFavoriteToggle(competition.id, competition.is_favorite)}
+                            className={`px-5 py-2.5 text-sm font-medium rounded-lg transition-all border border-slate-200 hover:border-slate-300 ${
+                              competition.is_favorite
+                                ? 'bg-yellow-100 text-slate-900 border-yellow-400'
+                                : 'bg-slate-50 text-slate-700 hover:bg-slate-100'
+                            }`}
+                            title={competition.is_favorite ? 'お気に入りから削除' : 'お気に入りに追加'}
+                          >
+                            {competition.is_favorite ? '⭐' : '☆'}
+                          </button>
+                          {/* Kaggleで見るボタン */}
+                          <a
+                            href={competition.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="px-5 py-2.5 text-sm font-medium text-slate-700 bg-slate-50 hover:bg-slate-100 border border-slate-200 hover:border-slate-300 rounded-lg transition-all flex items-center gap-2 group/btn"
+                          >
+                            <span>Kaggle で見る</span>
+                            <svg className="w-4 h-4 group-hover/btn:translate-x-0.5 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                            </svg>
+                          </a>
+                        </div>
                       </div>
                       </div>
                     </div>

@@ -178,6 +178,135 @@ class CacheService:
             print(f"❌ 統計取得エラー: {e}")
             return {"enabled": False, "error": str(e)}
 
+    # ============================================
+    # ディスカッション・解法のコンテンツキャッシュ
+    # （容量削減のため、DBではなくRedisに3日間保存）
+    # ============================================
+
+    CONTENT_TTL_DAYS = 3  # 3日間
+
+    def save_discussion_content(self, discussion_id: int, content: str) -> bool:
+        """
+        ディスカッションのコンテンツをキャッシュに保存（3日間）
+
+        Args:
+            discussion_id: ディスカッションID
+            content: コンテンツ（HTML）
+
+        Returns:
+            保存成功したかどうか
+        """
+        if not self.redis:
+            return False
+
+        try:
+            key = f"discussion:{discussion_id}:content"
+            ttl_seconds = self.CONTENT_TTL_DAYS * 24 * 60 * 60
+            self.redis.setex(key, ttl_seconds, content)
+            print(f"💾 ディスカッションコンテンツ保存: {discussion_id} (TTL: {self.CONTENT_TTL_DAYS}日)")
+            return True
+        except Exception as e:
+            print(f"❌ ディスカッションコンテンツ保存エラー ({discussion_id}): {e}")
+            return False
+
+    def get_discussion_content(self, discussion_id: int) -> Optional[str]:
+        """
+        ディスカッションのコンテンツをキャッシュから取得
+
+        Args:
+            discussion_id: ディスカッションID
+
+        Returns:
+            コンテンツ（HTML）、存在しない場合はNone
+        """
+        if not self.redis:
+            return None
+
+        try:
+            key = f"discussion:{discussion_id}:content"
+            content = self.redis.get(key)
+            if content:
+                print(f"📦 ディスカッションコンテンツキャッシュヒット: {discussion_id}")
+            return content
+        except Exception as e:
+            print(f"❌ ディスカッションコンテンツ取得エラー ({discussion_id}): {e}")
+            return None
+
+    def save_solution_content(self, solution_id: int, content: str) -> bool:
+        """
+        解法のコンテンツをキャッシュに保存（3日間）
+
+        Args:
+            solution_id: 解法ID
+            content: コンテンツ（HTML）
+
+        Returns:
+            保存成功したかどうか
+        """
+        if not self.redis:
+            return False
+
+        try:
+            key = f"solution:{solution_id}:content"
+            ttl_seconds = self.CONTENT_TTL_DAYS * 24 * 60 * 60
+            self.redis.setex(key, ttl_seconds, content)
+            print(f"💾 解法コンテンツ保存: {solution_id} (TTL: {self.CONTENT_TTL_DAYS}日)")
+            return True
+        except Exception as e:
+            print(f"❌ 解法コンテンツ保存エラー ({solution_id}): {e}")
+            return False
+
+    def get_solution_content(self, solution_id: int) -> Optional[str]:
+        """
+        解法のコンテンツをキャッシュから取得
+
+        Args:
+            solution_id: 解法ID
+
+        Returns:
+            コンテンツ（HTML）、存在しない場合はNone
+        """
+        if not self.redis:
+            return None
+
+        try:
+            key = f"solution:{solution_id}:content"
+            content = self.redis.get(key)
+            if content:
+                print(f"📦 解法コンテンツキャッシュヒット: {solution_id}")
+            return content
+        except Exception as e:
+            print(f"❌ 解法コンテンツ取得エラー ({solution_id}): {e}")
+            return None
+
+    def get_content_ttl(self, discussion_id: Optional[int] = None, solution_id: Optional[int] = None) -> Optional[int]:
+        """
+        コンテンツキャッシュの残り有効期限を取得（秒）
+
+        Args:
+            discussion_id: ディスカッションID（オプション）
+            solution_id: 解法ID（オプション）
+
+        Returns:
+            残り秒数、キーが存在しない場合はNone
+        """
+        if not self.redis:
+            return None
+
+        try:
+            if discussion_id is not None:
+                key = f"discussion:{discussion_id}:content"
+            elif solution_id is not None:
+                key = f"solution:{solution_id}:content"
+            else:
+                return None
+
+            ttl = self.redis.ttl(key)
+            return ttl if ttl > 0 else None
+        except Exception as e:
+            print(f"❌ TTL取得エラー: {e}")
+            return None
+
 
 # グローバルインスタンス（シングルトンパターン）
 _cache_service_instance = None

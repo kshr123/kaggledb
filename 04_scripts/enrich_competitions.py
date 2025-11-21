@@ -64,13 +64,18 @@ def get_competitions_to_enrich(limit: int = None) -> List[Dict]:
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
 
-    # summary または tags が空のコンペティションを取得
+    # summary, tags, metric_description, または dataset_info が空のコンペティションを取得
     query = """
         SELECT
             id, title, url, start_date, end_date, status,
-            metric, description, summary, tags, data_types, domain
+            metric, metric_description, description, summary, tags, data_types, domain, dataset_info
         FROM competitions
-        WHERE (summary IS NULL OR summary = '' OR tags IS NULL OR tags = '[]' OR tags = '')
+        WHERE (
+            summary IS NULL OR summary = ''
+            OR tags IS NULL OR tags = '[]' OR tags = ''
+            OR metric_description IS NULL OR metric_description = ''
+            OR dataset_info IS NULL OR dataset_info = ''
+        )
         AND description IS NOT NULL
         AND description != ''
         ORDER BY created_at DESC
@@ -135,6 +140,9 @@ def update_competition(competition: Dict) -> bool:
                 tags = ?,
                 data_types = ?,
                 domain = ?,
+                metric = ?,
+                metric_description = ?,
+                dataset_info = ?,
                 last_scraped_at = ?,
                 updated_at = ?
             WHERE id = ?
@@ -143,6 +151,9 @@ def update_competition(competition: Dict) -> bool:
             tags_json,
             data_types_json,
             competition.get("domain", ""),
+            competition.get("metric", ""),
+            competition.get("metric_description", ""),
+            competition.get("dataset_info"),  # JSON文字列として保存
             competition.get("last_scraped_at"),  # スクレイピング日時
             now,
             competition["id"]
@@ -224,7 +235,7 @@ def main():
             scraped_data = scraper_service.get_competition_details(comp['id'])
 
             if scraped_data and scraped_data.get('full_text'):
-                print(f"  🌐 スクレイピング: {len(scraped_data['full_text'])}文字取得")
+                print(f"  🌐 Overview スクレイピング: {len(scraped_data['full_text'])}文字取得")
                 # スクレイピングした詳細テキストを使用
                 comp['description'] = scraped_data['full_text']
                 comp['last_scraped_at'] = scraped_data['scraped_at']
@@ -232,12 +243,28 @@ def main():
                 print(f"  ⚠️  スクレイピング失敗 - API の description を使用")
                 comp['last_scraped_at'] = None
 
-            # 2. LLMで充実化
-            enriched = llm_service.enrich_competition(comp, available_tags)
+            # 2. Dataタブのスクレイピング（dataset_infoが空の場合のみ）
+            data_tab_text = None
+            if not comp.get('dataset_info'):
+                data_tab_data = scraper_service.get_tab_content(comp['id'], tab='data')
+                if data_tab_data and data_tab_data.get('full_text'):
+                    data_tab_text = data_tab_data['full_text']
+                    print(f"  🌐 Data タブスクレイピング: {len(data_tab_text)}文字取得")
+                else:
+                    print(f"  ⚠️  Data タブスクレイピング失敗")
+
+            # 3. LLMで充実化
+            enriched = llm_service.enrich_competition(comp, available_tags, data_tab_text=data_tab_text)
 
             # 結果を表示
             if enriched.get("summary"):
                 print(f"  ✅ 要約生成: {len(enriched['summary'])}文字")
+            if enriched.get("metric"):
+                metric_text = enriched['metric']
+                if enriched.get("metric_description"):
+                    print(f"  ✅ 評価指標: {metric_text} ({len(enriched['metric_description'])}文字の説明)")
+                else:
+                    print(f"  ✅ 評価指標: {metric_text}")
             if enriched.get("data_types"):
                 print(f"  ✅ データタイプ: {', '.join(enriched['data_types'])}")
             if enriched.get("tags"):
@@ -245,6 +272,11 @@ def main():
                       (f" (+{len(enriched['tags'])-5}個)" if len(enriched['tags']) > 5 else ""))
             if enriched.get("domain"):
                 print(f"  ✅ ドメイン: {enriched['domain']}")
+            if enriched.get("dataset_info"):
+                dataset_info = json.loads(enriched['dataset_info'])
+                files_count = len(dataset_info.get('files', []))
+                features_count = len(dataset_info.get('features', []))
+                print(f"  ✅ データセット情報: {files_count}ファイル, {features_count}特徴量")
 
             # 3. データベース更新
             if not args.dry_run:

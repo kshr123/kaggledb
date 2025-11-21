@@ -8,11 +8,12 @@ import os
 from pathlib import Path
 from dotenv import load_dotenv
 
-# .envファイルを読み込み
-load_dotenv()
-
 # プロジェクトのルートディレクトリ
 BASE_DIR = Path(__file__).resolve().parent.parent
+PROJECT_ROOT = BASE_DIR.parent
+
+# .envファイルを読み込み（02_backendから）
+load_dotenv(BASE_DIR / ".env")
 
 # データベース設定
 DATABASE_PATH = BASE_DIR / "data" / "kaggle_competitions.db"

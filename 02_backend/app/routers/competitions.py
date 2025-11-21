@@ -244,6 +244,44 @@ def get_discussion(
     return discussion.to_dict()
 
 
+@router.get("/discussions/{discussion_id}/content")
+def get_discussion_content(discussion_id: int):
+    """
+    ディスカッションのコンテンツをRedisから取得
+
+    Args:
+        discussion_id: ディスカッションID
+
+    Returns:
+        dict: コンテンツ情報（原文と和訳）
+    """
+    from app.services.cache_service import get_cache_service
+
+    cache = get_cache_service()
+
+    # 原文コンテンツを取得
+    content = cache.get_discussion_content(discussion_id)
+
+    # 和訳コンテンツを取得
+    translated_content = cache.get_discussion_content(f"{discussion_id}_translated")
+
+    # TTL（残り有効期限）を取得
+    ttl_seconds = cache.get_content_ttl(discussion_id=discussion_id)
+
+    if not content and not translated_content:
+        raise HTTPException(
+            status_code=404,
+            detail="Content not found in cache. Please fetch the discussion detail first."
+        )
+
+    return {
+        "content": content,
+        "translated_content": translated_content,
+        "ttl_seconds": ttl_seconds,
+        "ttl_days": round(ttl_seconds / 86400, 1) if ttl_seconds else None
+    }
+
+
 @router.post("/discussions/{discussion_id}/fetch")
 def fetch_discussion_detail(
     discussion_id: int,
@@ -251,6 +289,8 @@ def fetch_discussion_detail(
 ):
     """
     ディスカッション詳細をスクレイピングして取得・保存
+
+    コンテンツはRedisに3日間キャッシュ、要約のみDBに保存
 
     Args:
         discussion_id: ディスカッションID
@@ -260,6 +300,7 @@ def fetch_discussion_detail(
     """
     from app.services.scraper_service import get_scraper_service
     from app.services.llm_service import get_llm_service
+    from app.services.cache_service import get_cache_service
 
     # ディスカッションを取得
     discussion = service.get_discussion(discussion_id)
@@ -274,6 +315,10 @@ def fetch_discussion_detail(
         raise HTTPException(status_code=500, detail="Failed to fetch discussion detail")
 
     content = detail['content']
+
+    # コンテンツをRedisに保存（3日間）
+    cache = get_cache_service()
+    cache.save_discussion_content(discussion_id, content)
 
     # リンク抽出
     links = extract_links_from_content(content)
@@ -292,12 +337,12 @@ def fetch_discussion_detail(
         # 原文を和訳・整理
         translated_content = llm.translate_and_organize_discussion(content)
 
-    # データベース更新
-    # 和訳されたコンテンツで上書き（原文はKaggleで確認可能）
-    if translated_content:
-        discussion.content = translated_content
-    else:
-        discussion.content = content
+        # 和訳もRedisに保存（キーを分ける）
+        if translated_content:
+            cache.save_discussion_content(f"{discussion_id}_translated", translated_content)
+
+    # データベース更新（contentはNULL、summaryのみ保存）
+    discussion.content = None  # コンテンツはRedisに保存済み
 
     if structured_summary:
         discussion.summary = structured_summary
@@ -307,7 +352,9 @@ def fetch_discussion_detail(
     return {
         "success": True,
         "discussion": updated_discussion.to_dict(),
-        "links": links
+        "links": links,
+        "content_cached_in_redis": True,
+        "cache_ttl_days": 3
     }
 
 
@@ -427,41 +474,31 @@ def fetch_discussions(
     # スクレイピング実行
     scraper = get_scraper_service()
 
-    # 1. Writeups取得（公式解法ページ、存在する場合のみ）
-    print("\n=== Writeups取得開始 ===", flush=True)
-    writeups = scraper.get_writeups(
+    # Discussions + Writeups 両方を取得（新しい実装：重複除去済み）
+    print("\n=== ディスカッション・Writeups取得開始（投票数順・3ページ）===", flush=True)
+    all_items = scraper.get_discussions(
         comp_id=competition_id,
         max_pages=3,
         force_refresh=True
     )
-    writeup_count = len(writeups) if writeups else 0
-    print(f"✓ Writeups取得完了: {writeup_count}件", flush=True)
-
-    # 2. Discussions取得（投票数順、5ページまで）
-    print("\n=== ディスカッション取得開始（投票数順・5ページ）===", flush=True)
-    discussions = scraper.get_discussions(
-        comp_id=competition_id,
-        max_pages=5,
-        force_refresh=True
-    )
-    discussion_count = len(discussions) if discussions else 0
-    print(f"✓ Discussions取得完了: {discussion_count}件", flush=True)
-
-    # 統合データを作成
-    all_items = []
-    if writeups:
-        all_items.extend(writeups)
-    if discussions:
-        all_items.extend(discussions)
 
     if not all_items:
         raise HTTPException(status_code=500, detail="Failed to fetch discussions and writeups")
 
-    # 3. Discussionsを保存（Writeupsは除外）
+    # カテゴリ別の集計
+    writeup_items = [d for d in all_items if d.get('category') == 'writeup']
+    discussion_items = [d for d in all_items if d.get('category') == 'discussion']
+
+    writeup_count = len(writeup_items)
+    discussion_count = len(discussion_items)
+
+    print(f"✓ 取得完了: 合計 {len(all_items)}件（Discussions: {discussion_count}件、Writeups: {writeup_count}件）", flush=True)
+
+    # Discussionsを保存（category='discussion' のみ）
     print(f"\n=== ディスカッション保存開始: {discussion_count}件 ===", flush=True)
     discussion_result = discussion_service.fetch_and_save_discussions(
         competition_id=competition_id,
-        discussions_data=discussions if discussions else []
+        discussions_data=discussion_items
     )
     print(f"✓ ディスカッション保存完了: {discussion_result}", flush=True)
 
@@ -541,6 +578,105 @@ def fetch_solutions(
     }
 
 
+@router.post("/competitions/{competition_id}/notebooks/fetch")
+def fetch_notebooks(
+    competition_id: str,
+    solution_service: Annotated["SolutionService", Depends(get_solution_service)] = None,
+    competition_service: Annotated[CompetitionService, Depends(get_competition_service)] = None
+):
+    """
+    コンペティションのノートブック一覧を取得してDBに保存
+
+    Args:
+        competition_id: コンペID（slug）
+
+    Returns:
+        dict: 取得結果（新規保存数、更新数、合計数）
+    """
+    from app.services.scraper_service import get_scraper_service
+
+    # コンペの存在確認
+    comp = competition_service.get_competition(competition_id)
+    if not comp:
+        raise HTTPException(status_code=404, detail="Competition not found")
+
+    # スクレイピング実行
+    scraper = get_scraper_service()
+    notebooks = scraper.get_notebooks(
+        comp_id=competition_id,
+        max_pages=3,  # 最大60件のノートブックを取得
+        force_refresh=True
+    )
+
+    if not notebooks:
+        return {
+            "saved": 0,
+            "updated": 0,
+            "total": 0,
+            "message": "ノートブックが見つかりませんでした"
+        }
+
+    # DBに保存
+    result = solution_service.fetch_and_save_notebooks(
+        competition_id=competition_id,
+        notebooks_data=notebooks
+    )
+
+    return {
+        **result,
+        "message": f"{result['total']}件のノートブックを保存しました"
+    }
+
+
+@router.get("/competitions/{competition_id}/notebooks")
+def get_notebooks(
+    competition_id: str,
+    sort_by: str = Query("vote_count", description="ソート項目（vote_count, created_at）"),
+    order: str = Query("desc", description="ソート順（asc/desc）"),
+    limit: Optional[int] = Query(None, description="取得件数の上限")
+):
+    """
+    コンペティションのノートブック一覧を取得
+
+    Args:
+        competition_id: コンペID
+        sort_by: ソート項目
+        order: ソート順
+        limit: 取得件数の上限
+
+    Returns:
+        List[Solution]: ノートブック一覧（type='notebook'のもののみ）
+    """
+    conn = sqlite3.connect(DATABASE_PATH)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+
+    # ソート項目の検証
+    allowed_sort_fields = ["vote_count", "created_at", "title"]
+    if sort_by not in allowed_sort_fields:
+        sort_by = "vote_count"
+
+    # ソート順の検証
+    if order.lower() not in ["asc", "desc"]:
+        order = "desc"
+
+    # クエリ構築
+    query = f"""
+        SELECT * FROM solutions
+        WHERE competition_id = ? AND type = 'notebook'
+        ORDER BY {sort_by} {order.upper()}
+    """
+
+    if limit:
+        query += f" LIMIT {limit}"
+
+    cursor.execute(query, (competition_id,))
+    notebooks = cursor.fetchall()
+    conn.close()
+
+    return [dict(nb) for nb in notebooks]
+
+
 def extract_links_from_content(content: str) -> dict:
     """
     本文からリンクを抽出
@@ -587,10 +723,50 @@ def extract_links_from_content(content: str) -> dict:
     }
 
 
+@router.get("/solutions/{solution_id}/content")
+def get_solution_content(solution_id: int):
+    """
+    解法のコンテンツをRedisから取得
+
+    Args:
+        solution_id: 解法ID
+
+    Returns:
+        dict: コンテンツ情報（原文と和訳）
+    """
+    from app.services.cache_service import get_cache_service
+
+    cache = get_cache_service()
+
+    # 原文コンテンツを取得
+    content = cache.get_solution_content(solution_id)
+
+    # 和訳コンテンツを取得
+    translated_content = cache.get_solution_content(f"{solution_id}_translated")
+
+    # TTL（残り有効期限）を取得
+    ttl_seconds = cache.get_content_ttl(solution_id=solution_id)
+
+    if not content and not translated_content:
+        raise HTTPException(
+            status_code=404,
+            detail="Content not found in cache. Please fetch the solution detail first."
+        )
+
+    return {
+        "content": content,
+        "translated_content": translated_content,
+        "ttl_seconds": ttl_seconds,
+        "ttl_days": round(ttl_seconds / 86400, 1) if ttl_seconds else None
+    }
+
+
 @router.post("/solutions/{solution_id}/fetch")
 def fetch_solution_detail(solution_id: int):
     """
-    解法詳細をスクレイピングして取得・保存（ディスカッションと同じパターン）
+    解法詳細をスクレイピングして取得・保存
+
+    コンテンツはRedisに3日間キャッシュ、要約と技術情報のみDBに保存
 
     Args:
         solution_id: 解法ID
@@ -600,6 +776,7 @@ def fetch_solution_detail(solution_id: int):
     """
     from app.services.scraper_service import get_scraper_service
     from app.services.llm_service import get_llm_service
+    from app.services.cache_service import get_cache_service
 
     # 解法の存在確認
     conn = sqlite3.connect(DATABASE_PATH)
@@ -625,6 +802,10 @@ def fetch_solution_detail(solution_id: int):
 
     content = detail['content']
 
+    # コンテンツをRedisに保存（3日間）
+    cache = get_cache_service()
+    cache.save_solution_content(solution_id, content)
+
     # リンク抽出
     links = extract_links_from_content(content)
 
@@ -642,41 +823,30 @@ def fetch_solution_detail(solution_id: int):
         # 原文を和訳・整理
         translated_content = llm.translate_and_organize_discussion(content)
 
+        # 和訳もRedisに保存
+        if translated_content:
+            cache.save_solution_content(f"{solution_id}_translated", translated_content)
+
     # 技術抽出
     techniques_json = llm.extract_solution_techniques(content, solution_dict['title'])
 
-    # データベース更新（和訳されたcontentを保存）
+    # データベース更新（contentはNULL、summaryとtechniquesのみ保存）
     conn = sqlite3.connect(DATABASE_PATH)
     cursor = conn.cursor()
 
-    if translated_content:
-        cursor.execute("""
-            UPDATE solutions
-            SET content = ?,
-                summary = ?,
-                techniques = ?,
-                updated_at = ?
-            WHERE id = ?
-        """, (
-            translated_content,
-            structured_summary,
-            techniques_json,
-            datetime.now().isoformat(),
-            solution_id
-        ))
-    else:
-        cursor.execute("""
-            UPDATE solutions
-            SET summary = ?,
-                techniques = ?,
-                updated_at = ?
-            WHERE id = ?
-        """, (
-            structured_summary,
-            techniques_json,
-            datetime.now().isoformat(),
-            solution_id
-        ))
+    cursor.execute("""
+        UPDATE solutions
+        SET content = NULL,
+            summary = ?,
+            techniques = ?,
+            updated_at = ?
+        WHERE id = ?
+    """, (
+        structured_summary,
+        techniques_json,
+        datetime.now().isoformat(),
+        solution_id
+    ))
 
     conn.commit()
 
@@ -690,7 +860,9 @@ def fetch_solution_detail(solution_id: int):
     return {
         "success": True,
         "solution": updated_solution,
-        "links": links
+        "links": links,
+        "content_cached_in_redis": True,
+        "cache_ttl_days": 3
     }
 
 
@@ -758,4 +930,174 @@ def fetch_dataset_info(
     return {
         "success": True,
         "dataset_info": dataset_info  # 構造化データを返す
+    }
+
+
+@router.post("/competitions/{competition_id}/summary/generate")
+def generate_competition_summary(
+    competition_id: str,
+    competition_service: Annotated[CompetitionService, Depends(get_competition_service)] = None
+):
+    """
+    コンペティションの概要（description）からLLM要約を生成
+
+    Args:
+        competition_id: コンペID（slug）
+
+    Returns:
+        dict: 生成結果
+    """
+    # コンペティションが存在するか確認
+    competition = competition_service.get_competition(competition_id)
+    if not competition:
+        raise HTTPException(status_code=404, detail="Competition not found")
+
+    # すでに要約がある場合は返す
+    if competition.summary:
+        import json
+        try:
+            summary = json.loads(competition.summary)
+            return {
+                "success": True,
+                "summary": summary,
+                "cached": True
+            }
+        except json.JSONDecodeError:
+            # JSON解析エラーの場合は再生成
+            pass
+
+    # descriptionがない場合はエラー
+    if not competition.description:
+        raise HTTPException(status_code=400, detail="Competition has no description")
+
+    # LLMで要約を生成
+    from app.services.llm_service import get_llm_service
+    llm = get_llm_service()
+
+    summary_json = llm.generate_summary(
+        description=competition.description,
+        title=competition.title,
+        metric=competition.metric or ""
+    )
+
+    if not summary_json:
+        raise HTTPException(status_code=500, detail="Failed to generate summary")
+
+    # データベース更新
+    conn = sqlite3.connect(DATABASE_PATH)
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        UPDATE competitions
+        SET summary = ?
+        WHERE id = ?
+    """, (summary_json, competition_id))
+
+    conn.commit()
+    conn.close()
+
+    # 要約を返す
+    import json
+    summary = json.loads(summary_json)
+    return {
+        "success": True,
+        "summary": summary,
+        "cached": False
+    }
+
+
+@router.post("/notebooks/{notebook_id}/summarize")
+def summarize_notebook(
+    notebook_id: int,
+    solution_service: Annotated["SolutionService", Depends(get_solution_service)] = None
+):
+    """
+    ノートブックの要約を生成
+
+    Args:
+        notebook_id: ノートブックID（solutionsテーブルのid）
+
+    Returns:
+        要約のJSON
+    """
+    import json
+    from app.services.scraper_service import get_scraper_service
+    from app.services.llm_service import get_llm_service
+
+    # 1. データベースからノートブック情報を取得
+    conn = sqlite3.connect(DATABASE_PATH)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT * FROM solutions
+        WHERE id = ? AND type = 'notebook'
+    """, (notebook_id,))
+
+    notebook = cursor.fetchone()
+
+    if not notebook:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Notebook not found")
+
+    notebook_dict = dict(notebook)
+
+    # すでに要約がある場合は返す
+    if notebook_dict.get('summary'):
+        conn.close()
+        try:
+            summary = json.loads(notebook_dict['summary'])
+            return {
+                "success": True,
+                "summary": summary,
+                "cached": True
+            }
+        except json.JSONDecodeError:
+            # JSON解析エラーの場合は再生成
+            pass
+
+    # 2. スクレイパーでノートブックのコンテンツを取得
+    scraper = get_scraper_service()
+    detail = scraper.get_discussion_detail(notebook_dict['url'])
+
+    if not detail or not detail.get('content'):
+        conn.close()
+        raise HTTPException(status_code=500, detail="Failed to fetch notebook content")
+
+    content = detail['content']
+
+    # コンテンツをRedisに保存（3日間）
+    from app.services.cache_service import get_cache_service
+    cache = get_cache_service()
+    cache.save_solution_content(notebook_id, content)
+
+    # 3. LLMで要約を生成
+    llm = get_llm_service()
+    summary_json = llm.summarize_notebook(
+        content=content,
+        title=notebook_dict['title']
+    )
+
+    if not summary_json or summary_json == "{}":
+        conn.close()
+        raise HTTPException(status_code=500, detail="Failed to generate summary")
+
+    # 4. データベースに保存（contentは保存しない）
+    cursor.execute("""
+        UPDATE solutions
+        SET summary = ?
+        WHERE id = ?
+    """, (summary_json, notebook_id))
+
+    conn.commit()
+    conn.close()
+
+    # 5. 要約を返す
+    summary = json.loads(summary_json)
+    return {
+        "success": True,
+        "summary": summary,
+        "cached": False,
+        "content_cached_in_redis": True,
+        "cache_ttl_days": 3
     }

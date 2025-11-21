@@ -7,9 +7,14 @@ interface SolutionCardProps {
 }
 
 export default function SolutionCard({ solution, competitionId }: SolutionCardProps) {
+  // ノートブックとそれ以外で異なるページにリンク
+  const href = solution.type === 'notebook'
+    ? `/competitions/${competitionId}/notebooks/${solution.id}`
+    : `/competitions/${competitionId}/solutions/${solution.id}`
+
   return (
     <Link
-      href={`/competitions/${competitionId}/solutions/${solution.id}`}
+      href={href}
       className="block border border-slate-200 rounded-lg p-4 hover:border-blue-300 hover:bg-blue-50/30 transition-all cursor-pointer"
     >
       <div className="flex items-start gap-3">
